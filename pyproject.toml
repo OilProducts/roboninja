@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "roboninja"
+version = "0.1.0"
+description = "RoboNinja FastMCP server template"
+readme = "README.md"
+authors = [{ name = "RoboNinja" }]
+requires-python = ">=3.10"
+dependencies = [
+    "mcp[cli]>=0.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+]
+
+[project.scripts]
+roboninja = "roboninja.cli:run"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "src/roboninja",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/roboninja",
+    "tests",
+    "README.md",
+]
