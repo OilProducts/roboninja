@@ -1,15 +1,24 @@
 """RoboNinja FastMCP server package."""
 
-from .server import (
-    Settings,
-    create_app,
-    main,
-    mcp,
-    run_stdio,
-    summarize_markdown_text,
+from .binaryninja_service import (
+    BinaryNinjaFunctionError,
+    BinaryNinjaHandleError,
+    BinaryNinjaLicenseError,
+    BinaryNinjaService,
+    BinaryNinjaServiceError,
+    BinaryNinjaUnavailableError,
 )
+from .cli import install_plugin
+from .server import Settings, create_app, main, mcp, run_stdio, summarize_markdown_text
 
 __all__ = [
+    "install_plugin",
+    "BinaryNinjaFunctionError",
+    "BinaryNinjaHandleError",
+    "BinaryNinjaLicenseError",
+    "BinaryNinjaService",
+    "BinaryNinjaServiceError",
+    "BinaryNinjaUnavailableError",
     "Settings",
     "create_app",
     "main",

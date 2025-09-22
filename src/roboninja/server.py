@@ -17,8 +17,15 @@ try:
 except Exception as exc:  # pragma: no cover
     FastMCP = None  # type: ignore[assignment]
     _FASTMCP_IMPORT_ERROR = exc
-else:
+else:  # pragma: no cover - import success path exercised via app
     _FASTMCP_IMPORT_ERROR = None
+
+from .binaryninja_service import (
+    BinaryNinjaLicenseError,
+    BinaryNinjaService,
+    BinaryNinjaServiceError,
+    BinaryNinjaUnavailableError,
+)
 
 
 @dataclass(frozen=True)
@@ -123,6 +130,24 @@ def summarize_markdown_text(md: str, max_sentences: int = 3) -> str:
     return ". ".join(parts[: max(1, max_sentences)]) + ("." if parts else "")
 
 
+def _parse_address(value: str | int) -> int:
+    if isinstance(value, int):
+        return value
+    text = value.strip()
+    if text.lower().startswith("0x"):
+        return int(text, 16)
+    return int(text)
+
+
+def _wrap_service_call(fn):
+    try:
+        return fn()
+    except BinaryNinjaLicenseError as exc:
+        raise RuntimeError(f"Binary Ninja license error: {exc}") from exc
+    except BinaryNinjaServiceError as exc:
+        raise RuntimeError(str(exc)) from exc
+
+
 def create_app(settings: Optional[Settings] = None) -> FastMCP:
     if FastMCP is None:
         detail = ""
@@ -140,6 +165,22 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
 
     ratelimited = _ratelimited(limiter)
     store: Dict[str, str] = {}
+
+    try:
+        bn_service = BinaryNinjaService()
+        bn_error: Optional[Exception] = None
+    except (BinaryNinjaUnavailableError, BinaryNinjaLicenseError) as exc:
+        bn_service = None
+        bn_error = exc
+        log.warning("Binary Ninja unavailable: %s", exc)
+
+    def require_service() -> BinaryNinjaService:
+        if bn_service is None:
+            raise RuntimeError(
+                "Binary Ninja service unavailable: "
+                + (str(bn_error) if bn_error else "module not loaded")
+            )
+        return bn_service
 
     @app.tool()
     @ratelimited
@@ -191,6 +232,118 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         """Lightweight summariser for short Markdown strings."""
 
         return summarize_markdown_text(md, max_sentences)
+
+    @app.tool()
+    @ratelimited
+    def bn_open(
+        path: str,
+        update_analysis: bool = True,
+        analysis_timeout: Optional[float] = None,
+    ) -> dict:
+        """Open a binary with Binary Ninja and return a view handle."""
+
+        service = require_service()
+        summary = _wrap_service_call(
+            lambda: service.open_view(
+                path,
+                update_analysis=update_analysis,
+                analysis_timeout=analysis_timeout,
+            )
+        )
+        return {"ok": True, "view": summary}
+
+    @app.tool()
+    @ratelimited
+    def bn_list() -> dict:
+        """List active Binary Ninja views."""
+
+        service = require_service()
+        return _wrap_service_call(service.list_views)
+
+    @app.tool()
+    @ratelimited
+    def bn_close(handle: str) -> dict:
+        """Close a Binary Ninja view by handle."""
+
+        service = require_service()
+        return _wrap_service_call(lambda: service.close_view(handle))
+
+    @app.tool()
+    @ratelimited
+    def bn_functions(
+        handle: str,
+        name_contains: Optional[str] = None,
+        min_size: int = 0,
+    ) -> dict:
+        """Return function metadata for a view."""
+
+        service = require_service()
+        return _wrap_service_call(
+            lambda: service.get_function_list(
+                handle,
+                name_contains=name_contains,
+                min_size=min_size,
+            )
+        )
+
+    @app.tool()
+    @ratelimited
+    def bn_function_summary(handle: str, function: str) -> dict:
+        """Detailed summary for a specific function."""
+
+        service = require_service()
+        return _wrap_service_call(lambda: service.get_function_summary(handle, function))
+
+    @app.tool()
+    @ratelimited
+    def bn_hlil(
+        handle: str,
+        function: str,
+        max_instructions: Optional[int] = None,
+    ) -> dict:
+        """Return High Level IL lines for a function."""
+
+        service = require_service()
+        return _wrap_service_call(
+            lambda: service.get_high_level_il(
+                handle,
+                function,
+                max_instructions=max_instructions,
+            )
+        )
+
+    @app.tool()
+    @ratelimited
+    def bn_basic_blocks(handle: str, function: str) -> dict:
+        """List basic blocks for a function."""
+
+        service = require_service()
+        return _wrap_service_call(lambda: service.get_basic_blocks(handle, function))
+
+    @app.tool()
+    @ratelimited
+    def bn_strings(handle: str, min_length: int = 4) -> dict:
+        """Extract strings from the view."""
+
+        service = require_service()
+        return _wrap_service_call(lambda: service.get_strings(handle, min_length=min_length))
+
+    @app.tool()
+    @ratelimited
+    def bn_symbols(handle: str, symbol_type: Optional[str] = None) -> dict:
+        """Enumerate symbols from the view."""
+
+        service = require_service()
+        return _wrap_service_call(lambda: service.get_symbols(handle, symbol_type=symbol_type))
+
+    @app.tool()
+    @ratelimited
+    def bn_read(handle: str, address: str, length: int) -> dict:
+        """Read bytes at an address from the view."""
+
+        service = require_service()
+        addr_int = _parse_address(address)
+        return _wrap_service_call(lambda: service.read_bytes(handle, addr_int, length))
 
     return app
 
