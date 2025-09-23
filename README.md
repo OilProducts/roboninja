@@ -42,7 +42,7 @@ mcp sse -m roboninja.server:mcp --host 0.0.0.0 --port 8000
 python -m roboninja --transport stdio
 
 # Console script equivalent
-roboninja --transport stdio
+roboninja serve --transport stdio
 ```
 
 To inspect tools interactively, use the MCP inspector:
