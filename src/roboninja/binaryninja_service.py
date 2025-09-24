@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event, current_thread
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 
 LOG = logging.getLogger(__name__)
@@ -645,8 +645,8 @@ class BinaryNinjaService:
 
         for _ in range(count):
             try:
-                tokens, length = self._call_on_main_thread(
-                    lambda: view.get_instruction_text(current)
+                text, length = self._call_on_main_thread(
+                    lambda: self._disassemble_instruction(view, current)
                 )
             except Exception as exc:  # pragma: no cover
                 self._log.debug(
@@ -658,7 +658,6 @@ class BinaryNinjaService:
                 )
                 raise BinaryNinjaServiceError(f"Failed to disassemble at {hex(current)}: {exc}") from exc
 
-            text = "".join(getattr(token, "text", str(token)) for token in tokens)
             lines.append({"address": _format_addr(current), "text": text, "length": length})
 
             if not length:
@@ -876,6 +875,20 @@ class BinaryNinjaService:
                 return result.get("value")
 
         return func(*args, **kwargs)
+
+    def _disassemble_instruction(self, view: Any, address: int) -> Tuple[str, int]:
+        """Return the disassembly text and length for a single instruction."""
+
+        generator = view.disassembly_text(address)
+        try:
+            text, length = next(generator)
+        except StopIteration:
+            return "", 0
+
+        if text is None:
+            text = ""
+
+        return text, int(length) if length is not None else 0
 
     def _resolve_function(self, view: Any, identifier: str) -> Any:
         ident = identifier.strip()

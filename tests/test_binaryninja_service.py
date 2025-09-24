@@ -116,9 +116,8 @@ class _FakeBinaryView:
     def get_comment_at(self, address):
         return self._comments.get(address)
 
-    def get_instruction_text(self, address):
-        token = types.SimpleNamespace(text=f"instr_{address:x}")
-        return [token], 4
+    def disassembly_text(self, address):
+        yield (f"instr_{address:x}", 4)
 
     def get_code_refs(self, address):
         if address == 0x401000:
