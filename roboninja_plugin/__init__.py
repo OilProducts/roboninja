@@ -12,11 +12,30 @@ from pathlib import Path
 from typing import Optional
 
 from binaryninja import (  # type: ignore
+    BinaryView,
     MessageBoxButtonSet,
     MessageBoxIcon,
     PluginCommand,
     show_message_box,
 )
+
+try:  # pragma: no cover - best effort import for open-view enumeration
+    import binaryninja
+except Exception:  # pragma: no cover
+    binaryninja = None  # type: ignore
+
+try:  # pragma: no cover - UI modules unavailable in headless mode
+    from binaryninjaui import UIContext, UIContextNotification
+except Exception:  # pragma: no cover - headless/non-UI environment
+    UIContext = None  # type: ignore[assignment]
+    UIContextNotification = object  # type: ignore[assignment]
+
+
+log = logging.getLogger(__name__)
+
+BinaryView.set_default_session_data("roboninja_initialized", False)
+
+_ACTIVE_VIEW: Optional[BinaryView] = None
 
 
 _MCP_THREAD = None
@@ -45,17 +64,15 @@ def _ensure_mcp_available() -> bool:
         import mcp.server.fastmcp  # type: ignore
         _MCP_READY = True
         return True
-    except Exception:
-        pass
+    except Exception as exc:
+        log.debug("Initial import of mcp.server.fastmcp failed: %s", exc)
 
     if _MCP_SETUP_ATTEMPTED:
         return False
     _MCP_SETUP_ATTEMPTED = True
 
     if os.getenv("ROBONINJA_DISABLE_AUTO_MCP_INSTALL"):
-        logging.getLogger(__name__).warning(
-            "MCP package missing and auto-install disabled"
-        )
+        log.warning("MCP package missing and auto-install disabled")
         return False
 
     venv_path = Path(__file__).resolve().parent / ".roboninja_venv"
@@ -84,9 +101,7 @@ def _ensure_mcp_available() -> bool:
         _MCP_READY = True
         return True
     except Exception as exc:
-        logging.getLogger(__name__).warning(
-            "Failed to auto-install mcp package: %s", exc
-        )
+        log.warning("Failed to auto-install mcp package: %s", exc)
         return False
 
 
@@ -104,37 +119,42 @@ def _ensure_roboninja_on_path() -> None:
     for candidate in candidates:
         try:
             candidate = candidate.expanduser().resolve()
-        except Exception:
+        except Exception as exc:
+            log.debug("Failed to resolve candidate RoboNinja path %s: %s", candidate, exc)
             continue
         if candidate.exists() and str(candidate) not in sys.path:
+            log.debug("Adding %s to sys.path for RoboNinja", candidate)
             sys.path.insert(0, str(candidate))
 
 
 def _start_mcp_server() -> None:
     global _MCP_THREAD
     if os.getenv("ROBONINJA_DISABLE_MCP_SERVER"):
+        log.info("ROBONINJA_DISABLE_MCP_SERVER is set; skipping MCP server startup")
         return
     if _MCP_THREAD is not None and _MCP_THREAD.is_alive():
+        log.debug("MCP server thread already running; skipping startup")
         return
 
     _ensure_roboninja_on_path()
 
     if not _ensure_mcp_available():
-        logging.getLogger(__name__).warning(
-            "Skipping MCP server startup; mcp package unavailable"
-        )
+        log.warning("Skipping MCP server startup; mcp package unavailable")
         return
 
     try:
         from roboninja.server import create_app
     except Exception as exc:  # pragma: no cover
-        logging.getLogger(__name__).warning(
-            "RoboNinja MCP server unavailable: %s", exc
-        )
+        log.warning("RoboNinja MCP server unavailable: %s", exc)
         return
 
     host = os.getenv("ROBONINJA_MCP_HOST", "127.0.0.1")
     port = int(os.getenv("ROBONINJA_MCP_PORT", "18765"))
+    log.info(
+        "Starting RoboNinja MCP server thread targeting %s:%s (transport=sse)",
+        host,
+        port,
+    )
 
     def _worker() -> None:
         try:
@@ -143,24 +163,28 @@ def _start_mcp_server() -> None:
             app.settings.port = port
             app.run(transport="sse")
         except Exception as exc:  # pragma: no cover
-            logging.getLogger(__name__).error(
-                "RoboNinja MCP server failed: %s", exc
-            )
+            log.error("RoboNinja MCP server failed: %s", exc)
 
     _MCP_THREAD = threading.Thread(
         target=_worker, name="RoboNinjaMCP", daemon=True
     )
     _MCP_THREAD.start()
+    log.info("RoboNinja MCP server thread %s started", _MCP_THREAD.name)
 
 
 _ensure_roboninja_on_path()
 _start_mcp_server()
 
 try:  # pragma: no cover - executed inside Binary Ninja
-    from roboninja.binaryninja_service import BinaryNinjaService, BinaryNinjaServiceError
+    from roboninja.binaryninja_service import (
+        BinaryNinjaService,
+        BinaryNinjaServiceError,
+        get_service_singleton,
+    )
 except Exception as exc:  # pragma: no cover
     BinaryNinjaService = None  # type: ignore[assignment]
     _SERVICE_IMPORT_ERROR = exc
+    log.debug("Failed to import BinaryNinjaService inside plugin: %s", exc)
 else:  # pragma: no cover
     _SERVICE_IMPORT_ERROR = None
 
@@ -177,7 +201,7 @@ def _get_service() -> BinaryNinjaService:
 
     global _SERVICE
     if _SERVICE is None:
-        _SERVICE = BinaryNinjaService()
+        _SERVICE = get_service_singleton()
     return _SERVICE
 
 
@@ -186,103 +210,206 @@ def _close_view_quietly(service: BinaryNinjaService, handle: Optional[str]) -> N
         return
     try:
         service.close_view(handle)
-    except Exception:
-        pass
+    except Exception as exc:
+        log.debug("Error closing Binary Ninja view %s during cleanup: %s", handle, exc)
 
 
-def _format_functions(functions: list[dict]) -> str:
-    if not functions:
-        return "No functions discovered by RoboNinja."
-
-    top = functions[: min(10, len(functions))]
-    lines = [
-        f"{fn.get('name', '<unnamed>')} @ {fn.get('start') or '??'} ({fn.get('size', 0)} bytes)"
-        for fn in top
-    ]
-    message = "Top functions detected\n\n" + "\n".join(lines)
-
-    remaining = len(functions) - len(top)
-    if remaining > 0:
-        message += f"\n\n+ {remaining} more"
-    return message
+def _view_path_text(bv: BinaryView) -> Optional[str]:
+    file_obj = getattr(bv, "file", None)
+    if file_obj is not None:
+        candidate = getattr(file_obj, "original_filename", None) or getattr(file_obj, "filename", None)
+        if candidate:
+            return candidate
+    if hasattr(bv, "file_name"):
+        candidate = getattr(bv, "file_name")
+        if candidate:
+            return str(candidate)
+    return None
 
 
-def roboninja_summarize_functions(bv) -> None:  # pragma: no cover - UI entry point
-    """Display a quick summary of functions using the RoboNinja service."""
+def _register_active_view(bv: BinaryView, *, source: str) -> None:
+    global _ACTIVE_VIEW
+    if bv is None:
+        return
+
+    path = _view_path_text(bv) or f"<anonymous:{id(bv):x}>"
+
+    already = getattr(bv.session_data, "roboninja_initialized", False)
+    _ACTIVE_VIEW = bv
+    setattr(bv.session_data, "roboninja_initialized", True)
+    log.info("RoboNinja initialized for %s via %s", path, source)
+
+    attached = False
+    if BinaryNinjaService is not None and path:
+        try:
+            service = _get_service()
+        except Exception as exc:  # pragma: no cover
+            log.warning("Skipping service attach for %s: %s", path, exc)
+        else:
+            attach = getattr(service, 'attach_existing_view', None)
+            if callable(attach):
+                try:
+                    handle = attach(bv, path=path)
+                    log.info("RoboNinja service registered %s with handle %s", path, handle)
+                    attached = True
+                except Exception as exc:  # pragma: no cover
+                    log.warning("Failed to register active view with RoboNinja service: %s", exc)
+            if not attached:
+                try:
+                    summary = service.open_view(path, update_analysis=False, allow_create=False)
+                    handle = summary.get('handle') if isinstance(summary, dict) else None
+                    log.info("RoboNinja service open_view registered %s with handle %s", path, handle)
+                    attached = True
+                except Exception as exc:  # pragma: no cover
+                    log.warning("Unable to attach BinaryView %s to RoboNinja service: %s", path, exc)
+
+    return path if attached else path
+
+
+def _initialize_view_if_needed(bv: BinaryView, *, source: str) -> None:
+    if bv is None:
+        return
+    if getattr(bv.session_data, "roboninja_initialized", False):
+        return
+    _register_active_view(bv, source=source)
+
+
+def _initialize_existing_views() -> None:
+    if binaryninja is None:
+        return
+    getter = getattr(binaryninja, "get_open_views", None)
+    if not callable(getter):
+        return
+    try:
+        views = getter() or []
+    except Exception as exc:  # pragma: no cover
+        log.debug("Unable to enumerate existing Binary Ninja views: %s", exc)
+        return
+    for view in views:
+        if view is not None:
+            _initialize_view_if_needed(view, source="existing-view")
+
+
+def _schedule_initialize_existing_views() -> None:
+    if binaryninja is None:
+        _initialize_existing_views()
+        return
+    runner = getattr(binaryninja, "execute_on_main_thread_and_wait", None)
+    if callable(runner):
+        runner(_initialize_existing_views)
+    else:
+        _initialize_existing_views()
+
+
+def roboninja_initialize(bv) -> None:  # pragma: no cover - UI entry point
+    """Attach RoboNinja to the provided BinaryView."""
 
     if bv is None:
         show_message_box(
             "RoboNinja",
-            "No BinaryView provided to RoboNinja command.",
+            "No BinaryView provided to RoboNinja.",
             MessageBoxButtonSet.OKButtonSet,
             MessageBoxIcon.ErrorIcon,
         )
         return
 
-    try:
-        service = _get_service()
-    except Exception as exc:
+    _register_active_view(bv, source="manual-command")
+    path = _view_path_text(bv)
+    if path is not None:
         show_message_box(
             "RoboNinja",
-            f"Binary Ninja integration unavailable: \n{exc}",
+            f"RoboNinja is attached to:\n{path}",
             MessageBoxButtonSet.OKButtonSet,
-            MessageBoxIcon.ErrorIcon,
-        )
-        return
-
-    file_obj = getattr(bv, "file", None)
-    path = None
-    if file_obj is not None:
-        path = getattr(file_obj, "original_filename", None) or getattr(
-            file_obj, "filename", None
+            MessageBoxIcon.InformationIcon,
         )
 
-    if not path:
+
+def roboninja_initialize_refresh(bv) -> None:  # pragma: no cover - UI entry point
+    """Re-attach RoboNinja to the active BinaryView."""
+
+    if bv is None:
         show_message_box(
             "RoboNinja",
-            "Could not determine a filesystem path for the current BinaryView.",
+            "No BinaryView provided to RoboNinja.",
             MessageBoxButtonSet.OKButtonSet,
             MessageBoxIcon.ErrorIcon,
         )
         return
 
-    handle: Optional[str] = None
-    try:
-        opened = service.open_view(path, update_analysis=False)
-        handle = opened.get("handle")
-        functions = service.get_function_list(handle)["functions"]
-        message = _format_functions(functions)
-    except BinaryNinjaServiceError as exc:
-        message = f"Failed to analyze {path}: \n{exc}"
+    setattr(bv.session_data, "roboninja_initialized", False)
+    _register_active_view(bv, source="manual-refresh")
+    path = _view_path_text(bv)
+    if path is not None:
         show_message_box(
             "RoboNinja",
-            message,
+            f"RoboNinja re-attached to:\n{path}",
             MessageBoxButtonSet.OKButtonSet,
-            MessageBoxIcon.ErrorIcon,
+            MessageBoxIcon.InformationIcon,
         )
-        _close_view_quietly(service, handle)
-        return
-    except Exception as exc:
-        show_message_box(
-            "RoboNinja",
-            f"Unexpected error: {exc}",
-            MessageBoxButtonSet.OKButtonSet,
-            MessageBoxIcon.ErrorIcon,
-        )
-        _close_view_quietly(service, handle)
-        return
 
-    show_message_box(
-        "RoboNinja Function Summary",
-        message,
-        MessageBoxButtonSet.OKButtonSet,
-        MessageBoxIcon.InformationIcon,
-    )
-    _close_view_quietly(service, handle)
+
+def get_active_binary_view() -> Optional[BinaryView]:
+    """Return the BinaryView currently tracked by RoboNinja (if any)."""
+
+    return _ACTIVE_VIEW
+
+
+class _AutoInitializeNotification(UIContextNotification):
+    """Automatically attach RoboNinja when a view first loads or becomes active."""
+
+    def _resolve_view(self, context, file_context=None):
+        bv = None
+        if file_context is not None:
+            bv = getattr(file_context, "binaryView", None)
+        if bv is not None:
+            return bv
+        if context is None:
+            return None
+        try:
+            frame = context.getCurrentViewFrame()
+            if frame is not None:
+                return frame.getCurrentBinaryView()
+        except Exception as exc:  # pragma: no cover - defensive
+            log.debug("Unable to resolve BinaryView from UIContext: %s", exc)
+        return None
+
+    def OnAfterOpenFile(self, context, file_context) -> None:  # noqa: N802 (Binary Ninja API naming)
+        bv = self._resolve_view(context, file_context)
+        if bv is None:
+            return
+        _initialize_view_if_needed(bv, source="after-open")
+
+    def OnViewCreated(self, context, frame):  # noqa: N802
+        if frame is None:
+            return
+        bv = frame.getCurrentBinaryView()
+        if bv is None:
+            return
+        _initialize_view_if_needed(bv, source="view-created")
+
+    def OnViewChanged(self, context, frame):  # noqa: N802
+        if frame is None:
+            return
+        bv = frame.getCurrentBinaryView()
+        if bv is None:
+            return
+        _initialize_view_if_needed(bv, source="view-changed")
 
 
 PluginCommand.register(
-    r"RoboNinja\Summarize Functions",
-    "Run RoboNinja MCP summarization against the current view",
-    roboninja_summarize_functions,
+    r"RoboNinja\Initialize",
+    "Attach RoboNinja to the current BinaryView",
+    roboninja_initialize,
 )
+
+PluginCommand.register(
+    r"RoboNinja\Initialize (Refresh)",
+    "Re-attach RoboNinja to the current BinaryView",
+    roboninja_initialize_refresh,
+)
+
+if UIContext is not None:  # pragma: no cover
+    UIContext.registerNotification(_AutoInitializeNotification())
+    _schedule_initialize_existing_views()
+else:
+    _schedule_initialize_existing_views()

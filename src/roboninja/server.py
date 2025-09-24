@@ -17,15 +17,23 @@ try:
 except Exception as exc:  # pragma: no cover
     FastMCP = None  # type: ignore[assignment]
     _FASTMCP_IMPORT_ERROR = exc
+    logging.getLogger(__name__).debug("Failed to import FastMCP: %s", exc)
 else:  # pragma: no cover - import success path exercised via app
     _FASTMCP_IMPORT_ERROR = None
 
 from .binaryninja_service import (
     BinaryNinjaLicenseError,
     BinaryNinjaService,
+    get_service_singleton,
     BinaryNinjaServiceError,
     BinaryNinjaUnavailableError,
 )
+
+try:  # pragma: no cover - optional import inside Binary Ninja
+    import binaryninja
+except Exception as exc:  # pragma: no cover
+    binaryninja = None  # type: ignore
+    logging.getLogger(__name__).debug("Binary Ninja import failed in server: %s", exc)
 
 
 @dataclass(frozen=True)
@@ -87,6 +95,10 @@ def _configure_logging(log_level: str) -> logging.Logger:
     root_logger = logging.getLogger()
     root_logger.setLevel(getattr(logging, log_level, logging.INFO))
     root_logger.handlers[:] = [handler]
+
+    # Suppress noisy per-call logging from the low-level MCP server unless explicitly re-enabled.
+    logging.getLogger("mcp.server.lowlevel").setLevel(logging.WARNING)
+
     return logging.getLogger("mcp.server")
 
 
@@ -103,6 +115,34 @@ def _ratelimited(limiter: RateLimiter):
         return wrapper
 
     return decorator
+
+
+def _bn_log(level: str, message: str) -> None:
+    if binaryninja is None:
+        return
+
+    log_module = getattr(binaryninja, "log", None)
+    if log_module is None:
+        return
+
+    log_func = {
+        "debug": getattr(log_module, "log_debug", None),
+        "info": getattr(log_module, "log_info", None),
+        "warning": getattr(log_module, "log_warn", None),
+        "error": getattr(log_module, "log_error", None),
+    }.get(level)
+
+    if callable(log_func):
+        try:
+            log_func(message)
+        except Exception as exc:  # pragma: no cover
+            logging.getLogger(__name__).debug("Binary Ninja log call failed: %s", exc)
+
+
+def _log_tool_call(name: str, arguments: dict) -> None:
+    payload = json.dumps({"tool": name, "arguments": arguments}, ensure_ascii=False)
+    logging.getLogger("mcp.server").debug("Tool call: %s", payload)
+    _bn_log("debug", f"RoboNinja tool call: {payload}")
 
 
 def summarize_markdown_text(md: str, max_sentences: int = 3) -> str:
@@ -167,7 +207,7 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
     store: Dict[str, str] = {}
 
     try:
-        bn_service = BinaryNinjaService()
+        bn_service = get_service_singleton()
         bn_error: Optional[Exception] = None
     except (BinaryNinjaUnavailableError, BinaryNinjaLicenseError) as exc:
         bn_service = None
@@ -239,15 +279,26 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         path: str,
         update_analysis: bool = True,
         analysis_timeout: Optional[float] = None,
+        allow_create: bool = False,
     ) -> dict:
         """Open a binary with Binary Ninja and return a view handle."""
 
+        _log_tool_call(
+            "bn_open",
+            {
+                "path": path,
+                "update_analysis": update_analysis,
+                "analysis_timeout": analysis_timeout,
+                "allow_create": allow_create,
+            },
+        )
         service = require_service()
         summary = _wrap_service_call(
             lambda: service.open_view(
                 path,
                 update_analysis=update_analysis,
                 analysis_timeout=analysis_timeout,
+                allow_create=allow_create,
             )
         )
         return {"ok": True, "view": summary}
@@ -257,6 +308,7 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
     def bn_list() -> dict:
         """List active Binary Ninja views."""
 
+        _log_tool_call("bn_list", {})
         service = require_service()
         return _wrap_service_call(service.list_views)
 
@@ -265,6 +317,7 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
     def bn_close(handle: str) -> dict:
         """Close a Binary Ninja view by handle."""
 
+        _log_tool_call("bn_close", {"handle": handle})
         service = require_service()
         return _wrap_service_call(lambda: service.close_view(handle))
 
@@ -277,6 +330,10 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
     ) -> dict:
         """Return function metadata for a view."""
 
+        _log_tool_call(
+            "bn_functions",
+            {"handle": handle, "name_contains": name_contains, "min_size": min_size},
+        )
         service = require_service()
         return _wrap_service_call(
             lambda: service.get_function_list(
@@ -291,6 +348,7 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
     def bn_function_summary(handle: str, function: str) -> dict:
         """Detailed summary for a specific function."""
 
+        _log_tool_call("bn_function_summary", {"handle": handle, "function": function})
         service = require_service()
         return _wrap_service_call(lambda: service.get_function_summary(handle, function))
 
@@ -303,6 +361,10 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
     ) -> dict:
         """Return High Level IL lines for a function."""
 
+        _log_tool_call(
+            "bn_hlil",
+            {"handle": handle, "function": function, "max_instructions": max_instructions},
+        )
         service = require_service()
         return _wrap_service_call(
             lambda: service.get_high_level_il(
@@ -317,22 +379,127 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
     def bn_basic_blocks(handle: str, function: str) -> dict:
         """List basic blocks for a function."""
 
+        _log_tool_call("bn_basic_blocks", {"handle": handle, "function": function})
         service = require_service()
         return _wrap_service_call(lambda: service.get_basic_blocks(handle, function))
+
+    @app.tool()
+    @ratelimited
+    def bn_rename_function(handle: str, function: str, new_name: str) -> dict:
+        """Rename a Binary Ninja function to a new symbolic name."""
+
+        _log_tool_call(
+            "bn_rename_function",
+            {"handle": handle, "function": function, "new_name": new_name},
+        )
+        service = require_service()
+        return _wrap_service_call(lambda: service.rename_function(handle, function, new_name))
+
+    @app.tool()
+    @ratelimited
+    def bn_set_comment(handle: str, address: str | int, text: str) -> dict:
+        """Attach a repeatable comment at the specified address."""
+
+        _log_tool_call(
+            "bn_set_comment",
+            {"handle": handle, "address": str(address), "text": text},
+        )
+        service = require_service()
+        addr = _parse_address(address)
+        return _wrap_service_call(lambda: service.set_comment(handle, addr, text))
+
+    @app.tool()
+    @ratelimited
+    def bn_clear_comment(handle: str, address: str | int) -> dict:
+        """Clear any comment at the given address."""
+
+        _log_tool_call("bn_clear_comment", {"handle": handle, "address": str(address)})
+        service = require_service()
+        addr = _parse_address(address)
+        return _wrap_service_call(lambda: service.clear_comment(handle, addr))
+
+    @app.tool()
+    @ratelimited
+    def bn_disassemble(handle: str, address: str | int, count: int = 1) -> dict:
+        """Return disassembly text starting at *address* for *count* instructions."""
+
+        if count <= 0:
+            raise RuntimeError("count must be positive")
+
+        _log_tool_call(
+            "bn_disassemble",
+            {"handle": handle, "address": str(address), "count": count},
+        )
+        service = require_service()
+        addr = _parse_address(address)
+        return _wrap_service_call(lambda: service.disassemble(handle, addr, count=count))
+
+    @app.tool()
+    @ratelimited
+    def bn_code_refs(handle: str, address: str | int, max_results: int | None = None) -> dict:
+        """List code references targeting *address*."""
+
+        _log_tool_call(
+            "bn_code_refs",
+            {"handle": handle, "address": str(address), "max_results": max_results},
+        )
+        service = require_service()
+        addr = _parse_address(address)
+        return _wrap_service_call(
+            lambda: service.get_code_references(handle, addr, max_results=max_results)
+        )
+
+    @app.tool()
+    @ratelimited
+    def bn_data_refs(handle: str, address: str | int, max_results: int | None = None) -> dict:
+        """List data references targeting *address*."""
+
+        _log_tool_call(
+            "bn_data_refs",
+            {"handle": handle, "address": str(address), "max_results": max_results},
+        )
+        service = require_service()
+        addr = _parse_address(address)
+        return _wrap_service_call(
+            lambda: service.get_data_references(handle, addr, max_results=max_results)
+        )
 
     @app.tool()
     @ratelimited
     def bn_strings(handle: str, min_length: int = 4) -> dict:
         """Extract strings from the view."""
 
+        _log_tool_call("bn_strings", {"handle": handle, "min_length": min_length})
         service = require_service()
         return _wrap_service_call(lambda: service.get_strings(handle, min_length=min_length))
+
+    @app.tool()
+    @ratelimited
+    def bn_find_strings(
+        handle: str,
+        query: str | None = None,
+        min_length: int = 4,
+    ) -> dict:
+        """Search strings discovered in the view."""
+
+        if min_length <= 0:
+            raise RuntimeError("min_length must be positive")
+
+        _log_tool_call(
+            "bn_find_strings",
+            {"handle": handle, "query": query, "min_length": min_length},
+        )
+        service = require_service()
+        return _wrap_service_call(
+            lambda: service.find_strings(handle, query=query, min_length=min_length)
+        )
 
     @app.tool()
     @ratelimited
     def bn_symbols(handle: str, symbol_type: Optional[str] = None) -> dict:
         """Enumerate symbols from the view."""
 
+        _log_tool_call("bn_symbols", {"handle": handle, "symbol_type": symbol_type})
         service = require_service()
         return _wrap_service_call(lambda: service.get_symbols(handle, symbol_type=symbol_type))
 
@@ -341,6 +508,7 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
     def bn_read(handle: str, address: str, length: int) -> dict:
         """Read bytes at an address from the view."""
 
+        _log_tool_call("bn_read", {"handle": handle, "address": address, "length": length})
         service = require_service()
         addr_int = _parse_address(address)
         return _wrap_service_call(lambda: service.read_bytes(handle, addr_int, length))
@@ -362,7 +530,11 @@ def run_stdio(app: Optional[FastMCP] = None) -> None:
         from mcp.server.fastmcp import run
 
         run(app, transport="stdio")
-    except Exception:
+    except Exception as exc:
+        logging.getLogger("mcp.server").debug(
+            "mcp.server.fastmcp.run failed, falling back to app.run: %s",
+            exc,
+        )
         try:
             app.run(transport="stdio")  # type: ignore[attr-defined]
         except Exception as exc:  # pragma: no cover
