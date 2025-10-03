@@ -290,6 +290,7 @@ class BinaryNinjaService:
     def list_views(self) -> Dict[str, Any]:
         """Return metadata for all open views."""
 
+        self._auto_attach_open_views()
         with self._lock:
             summaries = [self._view_summary(view) for view in self._views.values()]
         return {"views": summaries}
@@ -391,16 +392,21 @@ class BinaryNinjaService:
         view = self._get_view(handle)
         func = self._resolve_function(view, identifier)
 
-        return {
-            "handle": handle,
-            "name": func.name,
-            "start": _format_addr(getattr(func, "start", None)),
-            "size": getattr(func, "total_bytes", getattr(func, "size", 0)),
-            "basic_block_count": len(getattr(func, "basic_blocks", [])),
-            "calling_convention": getattr(getattr(func, "calling_convention", None), "name", None),
-            "return_type": self._stringify(getattr(getattr(func, "type", None), "return_value", None)),
-            "parameters": [self._stringify(param) for param in getattr(func, "parameter_vars", [])],
-        }
+        def _collect() -> Dict[str, Any]:
+            return {
+                "handle": handle,
+                "name": func.name,
+                "start": _format_addr(getattr(func, "start", None)),
+                "size": getattr(func, "total_bytes", getattr(func, "size", 0)),
+                "basic_block_count": len(getattr(func, "basic_blocks", [])),
+                "calling_convention": getattr(getattr(func, "calling_convention", None), "name", None),
+                "return_type": self._stringify(getattr(getattr(func, "type", None), "return_value", None)),
+                "parameters": [
+                    self._stringify(param) for param in getattr(func, "parameter_vars", [])
+                ],
+            }
+
+        return self._call_on_main_thread(_collect)
 
     def get_high_level_il(
         self,
@@ -533,6 +539,8 @@ class BinaryNinjaService:
 
             def _apply() -> None:
                 view.define_user_symbol(symbol)
+                if hasattr(func, "user_name"):
+                    func.user_name = new_name
                 if hasattr(func, "name"):
                     func.name = new_name
 
@@ -645,7 +653,7 @@ class BinaryNinjaService:
 
         for _ in range(count):
             try:
-                text, length = self._call_on_main_thread(
+                result = self._call_on_main_thread(
                     lambda: self._disassemble_instruction(view, current)
                 )
             except Exception as exc:  # pragma: no cover
@@ -658,6 +666,12 @@ class BinaryNinjaService:
                 )
                 raise BinaryNinjaServiceError(f"Failed to disassemble at {hex(current)}: {exc}") from exc
 
+            if not isinstance(result, tuple) or len(result) != 2:
+                raise BinaryNinjaServiceError(
+                    "Binary Ninja returned unexpected disassembly response"
+                )
+
+            text, length = result
             lines.append({"address": _format_addr(current), "text": text, "length": length})
 
             if not length:
@@ -818,10 +832,65 @@ class BinaryNinjaService:
         )
         return None
 
+    def _auto_attach_open_views(self) -> None:
+        """Attach any UI-managed views that are not yet tracked by the service."""
+
+        getter = getattr(binaryninja, "get_open_views", None)
+        if not callable(getter):
+            return
+
+        try:
+            open_views = getter() or []
+        except Exception as exc:  # pragma: no cover - defensive
+            self._log.debug(
+                "binaryninja.get_open_views() failed during auto-attach: %s",
+                exc,
+                exc_info=True,
+            )
+            return
+
+        for view in open_views:
+            path = _resolve_view_path(view)
+            if path is None:
+                continue
+            with self._lock:
+                already_tracked = any(
+                    managed.view is view or managed.path == str(path)
+                    for managed in self._views.values()
+                )
+            if already_tracked:
+                continue
+            try:
+                self.attach_existing_view(view, path=str(path))
+            except Exception as exc:  # pragma: no cover - defensive
+                self._log.debug(
+                    "Failed to auto-attach BinaryView %s: %s",
+                    path,
+                    exc,
+                    exc_info=True,
+                )
+
     def _call_on_main_thread(self, func, *args, **kwargs):
         executor = getattr(binaryninja, "execute_on_main_thread_and_wait", None)
         if callable(executor):
-            return executor(lambda: func(*args, **kwargs))
+            result: dict[str, Any] = {}
+
+            def wrapper():
+                try:
+                    result["value"] = func(*args, **kwargs)
+                except Exception as exc:  # pragma: no cover
+                    result["error"] = exc
+                    self._log.debug(
+                        "Function %s raised when executed via execute_on_main_thread_and_wait: %s",
+                        getattr(func, "__name__", repr(func)),
+                        exc,
+                        exc_info=True,
+                    )
+
+            executor(wrapper)
+            if "error" in result:
+                raise result["error"]
+            return result.get("value")
 
         executor = getattr(binaryninja, "execute_on_main_thread", None)
         if callable(executor):
@@ -881,14 +950,32 @@ class BinaryNinjaService:
 
         generator = view.disassembly_text(address)
         try:
-            text, length = next(generator)
+            raw = next(generator)
         except StopIteration:
             return "", 0
 
-        if text is None:
-            text = ""
+        if isinstance(raw, tuple):
+            line, length = raw
+        else:
+            line = raw
+            length = getattr(raw, "length", getattr(raw, "instr_length", 0))
 
-        return text, int(length) if length is not None else 0
+        if line is None:
+            text = ""
+        elif hasattr(line, "tokens"):
+            try:
+                text = "".join(getattr(token, "text", "") for token in line.tokens)
+            except Exception:
+                text = str(line)
+        else:
+            text = str(line)
+
+        try:
+            length_value = int(length)
+        except Exception:
+            length_value = 0
+
+        return text, length_value
 
     def _resolve_function(self, view: Any, identifier: str) -> Any:
         ident = identifier.strip()

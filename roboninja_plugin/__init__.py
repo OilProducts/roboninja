@@ -11,13 +11,7 @@ import venv
 from pathlib import Path
 from typing import Optional
 
-from binaryninja import (  # type: ignore
-    BinaryView,
-    MessageBoxButtonSet,
-    MessageBoxIcon,
-    PluginCommand,
-    show_message_box,
-)
+from binaryninja import BinaryView, PluginCommand  # type: ignore
 
 try:  # pragma: no cover - best effort import for open-view enumeration
     import binaryninja
@@ -305,47 +299,29 @@ def roboninja_initialize(bv) -> None:  # pragma: no cover - UI entry point
     """Attach RoboNinja to the provided BinaryView."""
 
     if bv is None:
-        show_message_box(
-            "RoboNinja",
-            "No BinaryView provided to RoboNinja.",
-            MessageBoxButtonSet.OKButtonSet,
-            MessageBoxIcon.ErrorIcon,
-        )
+        log.error("RoboNinja initialize invoked without an active BinaryView")
         return
 
-    _register_active_view(bv, source="manual-command")
-    path = _view_path_text(bv)
+    path = _register_active_view(bv, source="manual-command")
     if path is not None:
-        show_message_box(
-            "RoboNinja",
-            f"RoboNinja is attached to:\n{path}",
-            MessageBoxButtonSet.OKButtonSet,
-            MessageBoxIcon.InformationIcon,
-        )
+        log.info("RoboNinja manually initialized for %s", path)
+    else:
+        log.info("RoboNinja manually initialized for unnamed BinaryView %s", id(bv))
 
 
 def roboninja_initialize_refresh(bv) -> None:  # pragma: no cover - UI entry point
     """Re-attach RoboNinja to the active BinaryView."""
 
     if bv is None:
-        show_message_box(
-            "RoboNinja",
-            "No BinaryView provided to RoboNinja.",
-            MessageBoxButtonSet.OKButtonSet,
-            MessageBoxIcon.ErrorIcon,
-        )
+        log.error("RoboNinja refresh invoked without an active BinaryView")
         return
 
     setattr(bv.session_data, "roboninja_initialized", False)
-    _register_active_view(bv, source="manual-refresh")
-    path = _view_path_text(bv)
+    path = _register_active_view(bv, source="manual-refresh")
     if path is not None:
-        show_message_box(
-            "RoboNinja",
-            f"RoboNinja re-attached to:\n{path}",
-            MessageBoxButtonSet.OKButtonSet,
-            MessageBoxIcon.InformationIcon,
-        )
+        log.info("RoboNinja manually refreshed for %s", path)
+    else:
+        log.info("RoboNinja manually refreshed for unnamed BinaryView %s", id(bv))
 
 
 def get_active_binary_view() -> Optional[BinaryView]:

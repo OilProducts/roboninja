@@ -145,6 +145,41 @@ def _log_tool_call(name: str, arguments: dict) -> None:
     _bn_log("debug", f"RoboNinja tool call: {payload}")
 
 
+def _estimate_payload_metrics(result: object) -> dict:
+    metrics: dict[str, object] = {}
+
+    serialized: Optional[str] = None
+    try:
+        serialized = json.dumps(result, ensure_ascii=False)
+    except TypeError as exc:
+        text = str(result)
+        metrics["serialization_error"] = type(exc).__name__
+        metrics["size_bytes"] = len(text.encode("utf-8", errors="replace"))
+        metrics["size_chars"] = len(text)
+    else:
+        metrics["size_bytes"] = len(serialized.encode("utf-8"))
+        metrics["size_chars"] = len(serialized)
+
+    if isinstance(result, dict):
+        metrics["top_level_keys"] = len(result)
+    elif isinstance(result, list):
+        metrics["top_level_items"] = len(result)
+
+    return metrics
+
+
+def _log_tool_result(name: str, result: object, duration: float) -> None:
+    metrics = _estimate_payload_metrics(result)
+    metrics.setdefault("size_bytes", 0)
+    metrics.setdefault("size_chars", 0)
+    metrics["tool"] = name
+    metrics["duration_ms"] = round(duration * 1000.0, 2)
+
+    payload = json.dumps(metrics, ensure_ascii=False)
+    logging.getLogger("mcp.server").debug("Tool result: %s", payload)
+    _bn_log("debug", f"RoboNinja tool result: {payload}")
+
+
 def summarize_markdown_text(md: str, max_sentences: int = 3) -> str:
     """Limit Markdown content to a few sentence-like chunks."""
 
@@ -179,13 +214,24 @@ def _parse_address(value: str | int) -> int:
     return int(text)
 
 
-def _wrap_service_call(fn):
+def _wrap_service_call(fn, *, tool_name: Optional[str] = None):
+    start = time.perf_counter()
     try:
-        return fn()
+        result = fn()
     except BinaryNinjaLicenseError as exc:
         raise RuntimeError(f"Binary Ninja license error: {exc}") from exc
     except BinaryNinjaServiceError as exc:
         raise RuntimeError(str(exc)) from exc
+    else:
+        if tool_name:
+            try:
+                duration = time.perf_counter() - start
+                _log_tool_result(tool_name, result, duration)
+            except Exception:  # pragma: no cover - logging must not break tools
+                logging.getLogger("mcp.server").debug(
+                    "Failed to log result metrics for %s", tool_name, exc_info=True
+                )
+        return result
 
 
 def create_app(settings: Optional[Settings] = None) -> FastMCP:
@@ -299,7 +345,8 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
                 update_analysis=update_analysis,
                 analysis_timeout=analysis_timeout,
                 allow_create=allow_create,
-            )
+            ),
+            tool_name="bn_open",
         )
         return {"ok": True, "view": summary}
 
@@ -310,7 +357,7 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
 
         _log_tool_call("bn_list", {})
         service = require_service()
-        return _wrap_service_call(service.list_views)
+        return _wrap_service_call(service.list_views, tool_name="bn_list")
 
     @app.tool()
     @ratelimited
@@ -319,7 +366,10 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
 
         _log_tool_call("bn_close", {"handle": handle})
         service = require_service()
-        return _wrap_service_call(lambda: service.close_view(handle))
+        return _wrap_service_call(
+            lambda: service.close_view(handle),
+            tool_name="bn_close",
+        )
 
     @app.tool()
     @ratelimited
@@ -340,7 +390,8 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
                 handle,
                 name_contains=name_contains,
                 min_size=min_size,
-            )
+            ),
+            tool_name="bn_functions",
         )
 
     @app.tool()
@@ -350,7 +401,10 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
 
         _log_tool_call("bn_function_summary", {"handle": handle, "function": function})
         service = require_service()
-        return _wrap_service_call(lambda: service.get_function_summary(handle, function))
+        return _wrap_service_call(
+            lambda: service.get_function_summary(handle, function),
+            tool_name="bn_function_summary",
+        )
 
     @app.tool()
     @ratelimited
@@ -371,7 +425,8 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
                 handle,
                 function,
                 max_instructions=max_instructions,
-            )
+            ),
+            tool_name="bn_hlil",
         )
 
     @app.tool()
@@ -381,7 +436,10 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
 
         _log_tool_call("bn_basic_blocks", {"handle": handle, "function": function})
         service = require_service()
-        return _wrap_service_call(lambda: service.get_basic_blocks(handle, function))
+        return _wrap_service_call(
+            lambda: service.get_basic_blocks(handle, function),
+            tool_name="bn_basic_blocks",
+        )
 
     @app.tool()
     @ratelimited
@@ -393,7 +451,10 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
             {"handle": handle, "function": function, "new_name": new_name},
         )
         service = require_service()
-        return _wrap_service_call(lambda: service.rename_function(handle, function, new_name))
+        return _wrap_service_call(
+            lambda: service.rename_function(handle, function, new_name),
+            tool_name="bn_rename_function",
+        )
 
     @app.tool()
     @ratelimited
@@ -406,7 +467,10 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         )
         service = require_service()
         addr = _parse_address(address)
-        return _wrap_service_call(lambda: service.set_comment(handle, addr, text))
+        return _wrap_service_call(
+            lambda: service.set_comment(handle, addr, text),
+            tool_name="bn_set_comment",
+        )
 
     @app.tool()
     @ratelimited
@@ -416,7 +480,10 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         _log_tool_call("bn_clear_comment", {"handle": handle, "address": str(address)})
         service = require_service()
         addr = _parse_address(address)
-        return _wrap_service_call(lambda: service.clear_comment(handle, addr))
+        return _wrap_service_call(
+            lambda: service.clear_comment(handle, addr),
+            tool_name="bn_clear_comment",
+        )
 
     @app.tool()
     @ratelimited
@@ -432,7 +499,10 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         )
         service = require_service()
         addr = _parse_address(address)
-        return _wrap_service_call(lambda: service.disassemble(handle, addr, count=count))
+        return _wrap_service_call(
+            lambda: service.disassemble(handle, addr, count=count),
+            tool_name="bn_disassemble",
+        )
 
     @app.tool()
     @ratelimited
@@ -446,7 +516,8 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         service = require_service()
         addr = _parse_address(address)
         return _wrap_service_call(
-            lambda: service.get_code_references(handle, addr, max_results=max_results)
+            lambda: service.get_code_references(handle, addr, max_results=max_results),
+            tool_name="bn_code_refs",
         )
 
     @app.tool()
@@ -461,7 +532,8 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         service = require_service()
         addr = _parse_address(address)
         return _wrap_service_call(
-            lambda: service.get_data_references(handle, addr, max_results=max_results)
+            lambda: service.get_data_references(handle, addr, max_results=max_results),
+            tool_name="bn_data_refs",
         )
 
     @app.tool()
@@ -471,7 +543,10 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
 
         _log_tool_call("bn_strings", {"handle": handle, "min_length": min_length})
         service = require_service()
-        return _wrap_service_call(lambda: service.get_strings(handle, min_length=min_length))
+        return _wrap_service_call(
+            lambda: service.get_strings(handle, min_length=min_length),
+            tool_name="bn_strings",
+        )
 
     @app.tool()
     @ratelimited
@@ -491,7 +566,8 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         )
         service = require_service()
         return _wrap_service_call(
-            lambda: service.find_strings(handle, query=query, min_length=min_length)
+            lambda: service.find_strings(handle, query=query, min_length=min_length),
+            tool_name="bn_find_strings",
         )
 
     @app.tool()
@@ -501,7 +577,10 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
 
         _log_tool_call("bn_symbols", {"handle": handle, "symbol_type": symbol_type})
         service = require_service()
-        return _wrap_service_call(lambda: service.get_symbols(handle, symbol_type=symbol_type))
+        return _wrap_service_call(
+            lambda: service.get_symbols(handle, symbol_type=symbol_type),
+            tool_name="bn_symbols",
+        )
 
     @app.tool()
     @ratelimited
@@ -511,7 +590,10 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         _log_tool_call("bn_read", {"handle": handle, "address": address, "length": length})
         service = require_service()
         addr_int = _parse_address(address)
-        return _wrap_service_call(lambda: service.read_bytes(handle, addr_int, length))
+        return _wrap_service_call(
+            lambda: service.read_bytes(handle, addr_int, length),
+            tool_name="bn_read",
+        )
 
     return app
 
