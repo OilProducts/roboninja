@@ -6,7 +6,6 @@ A Model Context Protocol server that exposes Binary Ninja analysis capabilities 
 - JSON-formatted logging configured through environment variables
 - In-process, per-minute rate limiting
 - Binary Ninja-backed tools (open/close views, enumerate functions, inspect IL, strings, symbols, and bytes)
-- Legacy utility helpers (`ping`, `echo`, lightweight key/value store)
 
 ## Installation
 Use your preferred virtual environment manager. For example:

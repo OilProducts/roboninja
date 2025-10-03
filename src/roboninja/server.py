@@ -10,7 +10,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Optional
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -178,33 +178,6 @@ def _log_tool_result(name: str, result: object, duration: float) -> None:
     payload = json.dumps(metrics, ensure_ascii=False)
     logging.getLogger("mcp.server").debug("Tool result: %s", payload)
     _bn_log("debug", f"RoboNinja tool result: {payload}")
-
-
-def summarize_markdown_text(md: str, max_sentences: int = 3) -> str:
-    """Limit Markdown content to a few sentence-like chunks."""
-
-    cleaned = []
-    fence = False
-    for line in md.splitlines():
-        s = line.strip()
-        if s.startswith("```"):
-            fence = not fence
-            continue
-        if fence:
-            continue
-        if s.startswith("#"):
-            s = s.lstrip("# ")
-        if s:
-            cleaned.append(s)
-    text = " ".join(cleaned)
-    parts = [
-        p.strip()
-        for p in text.replace("?", ".").replace("!", ".").split(".")
-        if p.strip()
-    ]
-    return ". ".join(parts[: max(1, max_sentences)]) + ("." if parts else "")
-
-
 def _parse_address(value: str | int) -> int:
     if isinstance(value, int):
         return value
@@ -250,8 +223,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
     app = FastMCP(settings.name)
 
     ratelimited = _ratelimited(limiter)
-    store: Dict[str, str] = {}
-
     try:
         bn_service = get_service_singleton()
         bn_error: Optional[Exception] = None
@@ -267,57 +238,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
                 + (str(bn_error) if bn_error else "module not loaded")
             )
         return bn_service
-
-    @app.tool()
-    @ratelimited
-    def ping() -> dict:
-        """Health probe returning server metadata."""
-
-        return {
-            "ok": True,
-            "name": settings.name,
-            "time": time.time(),
-            "monotonic": time.monotonic(),
-            "rate_limit_per_min": settings.rate_limit_per_min,
-        }
-
-    @app.tool()
-    @ratelimited
-    def kv_set(key: str, value: str) -> dict:
-        """Set a string value at `key` in the ephemeral store."""
-
-        if not key:
-            raise ValueError("key must be non-empty")
-        store[key] = value
-        log.info("kv_set", extra={"key": key, "size": len(value)})
-        return {"ok": True, "key": key, "stored_len": len(value)}
-
-    @app.tool()
-    @ratelimited
-    def kv_get(key: str) -> dict:
-        """Return the stored value for `key`, if present."""
-
-        if not key:
-            raise ValueError("key must be non-empty")
-        exists = key in store
-        return {"ok": exists, "key": key, "value": store.get(key)}
-
-    @app.tool()
-    @ratelimited
-    def echo(text: str, upper: bool = False, repeat: int = 1) -> str:
-        """Echo text (optionally uppercased) `repeat` times."""
-
-        if repeat < 1 or repeat > 16:
-            raise ValueError("repeat must be between 1 and 16")
-        out = text.upper() if upper else text
-        return " ".join(out for _ in range(repeat))
-
-    @app.tool()
-    @ratelimited
-    def summarize_markdown(md: str, max_sentences: int = 3) -> str:
-        """Lightweight summariser for short Markdown strings."""
-
-        return summarize_markdown_text(md, max_sentences)
 
     @app.tool()
     @ratelimited

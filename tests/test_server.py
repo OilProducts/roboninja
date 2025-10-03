@@ -1,8 +1,6 @@
-import os
-
 import pytest
 
-from roboninja.server import RateLimiter, Settings, summarize_markdown_text
+from roboninja.server import RateLimiter, Settings
 
 
 def test_settings_from_env(monkeypatch):
@@ -23,19 +21,3 @@ def test_rate_limiter_allows_within_window():
     assert limiter.allow() is True
     assert limiter.allow() is True
     assert limiter.allow() is False
-
-
-def test_summarize_markdown_text_strips_code_fences():
-    md = "Intro line.\n```\ncode block\n```\nConclusion."
-    summary = summarize_markdown_text(md, max_sentences=2)
-
-    assert "code" not in summary
-    assert summary.endswith(".")
-
-
-def test_summarize_markdown_text_trims_headings():
-    md = "# Heading\nSecond sentence. Third sentence. Fourth sentence."
-    summary = summarize_markdown_text(md, max_sentences=2)
-
-    assert summary.startswith("Heading")
-    assert summary.count(".") == 2
