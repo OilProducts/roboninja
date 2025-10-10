@@ -32,20 +32,11 @@ PY
 
 ## Configuration
 
-### Core server environment
+### CLI environment
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `LOG_LEVEL` | Logging verbosity (JSON output) | `INFO` |
-| `ROBONINJA_FORCE_PLAIN_LOGS` | Set to `1` to force human-readable logs even when not writing to a TTY | unset |
-| `ROBONINJA_SSE_POST_TIMEOUT` | Seconds to wait when posting MCP messages to an SSE endpoint before surfacing an error | `60` |
 | `BINARYNINJA_PATH` | Explicit path to the Binary Ninja executable (used by the CLI auto-launcher) | auto-detected |
-| `ROBONINJA_FIND_VIEW_TIMEOUT` | Seconds `bn_open` waits for the GUI to expose an already-open BinaryView before giving up | `5.0` |
-
-### CLI-specific environment
-
-| Variable | Purpose | Default |
-| --- | --- | --- |
 | `ROBONINJA_MCP_HOST` | Host the GUI-launched SSE server listens on | `127.0.0.1` |
 | `ROBONINJA_MCP_PORT` | Port for the GUI-launched SSE server | `18765` |
 | `ROBONINJA_MCP_WAIT_TIMEOUT` | Seconds the launcher waits for the SSE server to appear | `45` |
@@ -182,7 +173,7 @@ A minimal sample plugin lives in `binja_sample_plugin/` for reference.
 
 ## Server behaviour
 
-- **Logging** – JSON lines include timestamp, level, message, and logger name (`LOG_LEVEL` controls verbosity). Tool requests/results log extra metadata (payload sizes, durations) at DEBUG.
+- **Logging** – Non-interactive runs emit JSON lines (timestamp, level, message, logger name). Interactive CLI sessions fall back to plain text. Tool requests/results log extra metadata (payload sizes, durations) at DEBUG.
 
 ## Troubleshooting
 

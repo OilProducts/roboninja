@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -21,7 +20,7 @@ from mcp.shared.message import SessionMessage
 logger = logging.getLogger(__name__)
 
 _PATCH_FLAG = "_roboninja_sse_patched"
-_POST_TIMEOUT = float(os.getenv("ROBONINJA_SSE_POST_TIMEOUT", "60"))
+_POST_TIMEOUT = 60.0
 
 
 def _remove_request_params(url: str) -> str:

@@ -8,4 +8,4 @@ def test_settings_from_env(monkeypatch):
 
     settings = Settings.from_env()
 
-    assert settings.log_level == "DEBUG"
+    assert settings.log_level == "INFO"

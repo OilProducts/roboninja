@@ -5,9 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import time
-from dataclasses import dataclass
 from typing import Optional
 
 try:
@@ -34,17 +32,17 @@ except Exception as exc:  # pragma: no cover
     logging.getLogger(__name__).debug("Binary Ninja import failed in server: %s", exc)
 
 
-@dataclass(frozen=True)
 class Settings:
-    """Runtime configuration derived from environment variables."""
+    """Runtime configuration for the FastMCP server."""
 
-    log_level: str
+    __slots__ = ("log_level",)
+
+    def __init__(self, log_level: str = "INFO") -> None:
+        self.log_level = log_level
 
     @classmethod
     def from_env(cls) -> "Settings":
-        return cls(
-            log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
-        )
+        return cls()
 
 
 class JsonFormatter(logging.Formatter):
@@ -64,11 +62,10 @@ class JsonFormatter(logging.Formatter):
 
 def _configure_logging(log_level: str) -> logging.Logger:
     handler = logging.StreamHandler()
-    force_plain = os.getenv("ROBONINJA_FORCE_PLAIN_LOGS") == "1"
-    if not force_plain and not handler.stream.isatty():
-        handler.setFormatter(JsonFormatter())
-    else:
+    if handler.stream.isatty():
         handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    else:
+        handler.setFormatter(JsonFormatter())
     root_logger = logging.getLogger()
     root_logger.setLevel(getattr(logging, log_level, logging.INFO))
     root_logger.handlers[:] = [handler]

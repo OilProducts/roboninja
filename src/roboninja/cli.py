@@ -178,7 +178,6 @@ def _launch_session(
 ) -> None:
     executable = _locate_binaryninja(bn_path)
     env = os.environ.copy()
-    env.setdefault("ROBONINJA_SOURCE", str(_resolve_package_source()))
 
     command = [str(executable), str(binary)] + extra_args
 
