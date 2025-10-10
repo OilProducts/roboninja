@@ -30,16 +30,14 @@ print(binaryninja.core_version())
 PY
 ```
 
-## Configuration
+# Configuration
 
-### CLI environment
+CLI flags control the RoboNinja launcher:
 
-| Variable | Purpose | Default |
-| --- | --- | --- |
-| `BINARYNINJA_PATH` | Explicit path to the Binary Ninja executable (used by the CLI auto-launcher) | auto-detected |
-| `ROBONINJA_MCP_HOST` | Host the GUI-launched SSE server listens on | `127.0.0.1` |
-| `ROBONINJA_MCP_PORT` | Port for the GUI-launched SSE server | `18765` |
-| `ROBONINJA_MCP_WAIT_TIMEOUT` | Seconds the launcher waits for the SSE server to appear | `45` |
+- `--bn-path PATH` – explicitly point at the Binary Ninja executable (otherwise common install locations and `PATH` are used).
+- `--host HOST` – host where the GUI/plugin MCP SSE server listens (default `127.0.0.1`).
+- `--port PORT` – port for that SSE server (default `18765`).
+- `--timeout SECONDS` – seconds to wait for the SSE bridge before giving up (default `45`).
 
 ### Plugin environment
 
@@ -69,8 +67,8 @@ Set whichever matches your deployment.
 roboninja /path/to/target/binary
 ```
 
-- The CLI attempts to locate Binary Ninja automatically (respecting `BINARYNINJA_PATH`).
-- After the GUI opens, the CLI waits for the plugin-hosted MCP SSE server (`ROBONINJA_MCP_HOST:ROBONINJA_MCP_PORT`) and issues a `bn_open` so agents immediately receive a handle.
+- The CLI attempts to locate Binary Ninja automatically (common install paths and the `PATH`). Use `--bn-path` to override.
+- After the GUI opens, the CLI waits for the plugin-hosted MCP SSE server (default `127.0.0.1:18765`) and issues a `bn_open` so agents immediately receive a handle.
 - To pass additional arguments to Binary Ninja, append `--` and the desired flags (`roboninja target.bin -- --headless`).
 
 ### Bridging the GUI SSE server to stdio
@@ -108,7 +106,8 @@ mcp inspector -m roboninja.server:mcp  # inspect available tools
 [mcp_servers.roboninja]
 command = "roboninja"
 args = ["serve", "--transport", "stdio"]
-# env = { "BINARYNINJA_PATH" = "/path/to/binaryninja" }
+# To override the Binary Ninja location:
+# args = ["serve", "--transport", "stdio", "--bn-path", "/path/to/binaryninja"]
 ```
 
 **GUI-only (Non-Commercial license)**  
@@ -178,8 +177,8 @@ A minimal sample plugin lives in `binja_sample_plugin/` for reference.
 ## Troubleshooting
 
 - **License errors** – Set `BN_LICENSE`, `BN_LICENSE_PATH`, or Binary Ninja’s built-in license location before launching. Headless mode requires a Commercial/Ultimate license.
-- **`bn_open` reports “GUI has not opened this file yet”** – Either open the binary in the GUI first or call `bn_open` with `allow_create=True`. Increase `ROBONINJA_FIND_VIEW_TIMEOUT` if the GUI is slow to expose the view.
-- **Proxy timeouts** – Increase `roboninja proxy --timeout` or bump `ROBONINJA_MCP_WAIT_TIMEOUT`.
+- **`bn_open` reports “GUI has not opened this file yet”** – Either open the binary in the GUI first or call `bn_open` with `allow_create=True`.
+- **Proxy timeouts** – Increase `roboninja launch --timeout …` or `roboninja proxy --timeout …` for slower environments.
 - **No SSE server from the plugin** – Ensure `ROBONINJA_DISABLE_MCP_SERVER` is unset and that `mcp[cli]` installed successfully (check the Binary Ninja console).
 
 ## Development

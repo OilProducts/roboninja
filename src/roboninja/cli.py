@@ -81,13 +81,6 @@ def install_plugin(
 def _default_binaryninja_locations() -> list[Path]:
     candidates: list[Path] = []
 
-    env_hints = [
-        os.getenv("BINARYNINJA_PATH"),
-    ]
-    for hint in env_hints:
-        if hint:
-            candidates.append(Path(hint))
-
     if sys.platform == "darwin":
         candidates.extend(
             [
@@ -142,8 +135,7 @@ def _locate_binaryninja(explicit: Optional[str] = None) -> Path:
             return resolved
 
     raise RuntimeError(
-        "Unable to locate Binary Ninja executable. Specify it with '--bn-path' "
-        "or set BINARYNINJA_PATH."
+        "Unable to locate Binary Ninja executable. Specify it with '--bn-path'."
     )
 
 
@@ -340,19 +332,19 @@ def _build_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
     )
     launch_parser.add_argument(
         "--host",
-        default=os.getenv("ROBONINJA_MCP_HOST", "127.0.0.1"),
+        default="127.0.0.1",
         help="Host where the RoboNinja MCP server listens",
     )
     launch_parser.add_argument(
         "--port",
         type=int,
-        default=int(os.getenv("ROBONINJA_MCP_PORT", "18765")),
+        default=18765,
         help="Port for the RoboNinja MCP server",
     )
     launch_parser.add_argument(
         "--timeout",
         type=float,
-        default=float(os.getenv("ROBONINJA_MCP_WAIT_TIMEOUT", "45")),
+        default=45.0,
         help="Seconds to wait for the MCP server before giving up",
     )
     launch_parser.add_argument(
