@@ -13,5 +13,5 @@
 
 ## MCP Bridge
 - The Binary Ninja plugin launches an MCP SSE server on `127.0.0.1:18765` by default.
-- The plugin auto-installs `mcp[cli]` into a local virtualenv on first load (set `ROBONINJA_DISABLE_AUTO_MCP_INSTALL=1` to skip).
+- The plugin auto-installs `mcp[cli]` into a local virtualenv on first load.
 - Use `roboninja proxy` (optionally `--port`) to expose that server over stdio for Codex or other clients.

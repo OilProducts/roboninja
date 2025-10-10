@@ -134,7 +134,6 @@ class _FakeBinaryView:
 
 
 def _install_fake_module(monkeypatch, tmp_path, *, open_ok=True):
-    monkeypatch.setenv("ROBONINJA_FIND_VIEW_TIMEOUT", "0")
     binary_path = tmp_path / "sample.bin"
     binary_path.write_bytes(b"\x00" * 16)
 
@@ -195,9 +194,8 @@ def test_service_unavailable_when_module_missing(monkeypatch):
 
 
 def test_open_list_and_close(monkeypatch, tmp_path):
-    monkeypatch.setenv("ROBONINJA_FIND_VIEW_TIMEOUT", "0")
     binary_path = _install_fake_module(monkeypatch, tmp_path)
-    service = bns.BinaryNinjaService()
+    service = bns.BinaryNinjaService(find_view_timeout=0)
 
     opened = service.open_view(binary_path, update_analysis=False, allow_create=True)
     handle = opened["handle"]
@@ -253,9 +251,8 @@ def test_open_list_and_close(monkeypatch, tmp_path):
 
 
 def test_open_reuses_existing_view(monkeypatch, tmp_path):
-    monkeypatch.setenv("ROBONINJA_FIND_VIEW_TIMEOUT", "0")
     binary_path = _install_fake_module(monkeypatch, tmp_path)
-    service = bns.BinaryNinjaService()
+    service = bns.BinaryNinjaService(find_view_timeout=0)
 
     existing = _FakeBinaryView(binary_path, bns.binaryninja)
     bns.binaryninja._open_views.append(existing)
@@ -273,7 +270,7 @@ def test_open_reuses_existing_view(monkeypatch, tmp_path):
 
 def test_license_error_is_reported(monkeypatch, tmp_path):
     _install_fake_module(monkeypatch, tmp_path, open_ok=False)
-    service = bns.BinaryNinjaService()
+    service = bns.BinaryNinjaService(find_view_timeout=0)
 
     with pytest.raises(bns.BinaryNinjaLicenseError):
         service.open_view(str(tmp_path / "sample.bin"), allow_create=True)

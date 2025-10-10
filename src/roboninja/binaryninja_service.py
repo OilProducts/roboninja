@@ -167,7 +167,7 @@ class BinaryNinjaService:
 
     _log = logging.getLogger(__name__)
 
-    def __init__(self) -> None:
+    def __init__(self, *, find_view_timeout: float = 5.0) -> None:
         if binaryninja is None:
             detail = (
                 f"Binary Ninja Python module not available: {_BINARYNINJA_IMPORT_ERROR}"
@@ -178,6 +178,7 @@ class BinaryNinjaService:
 
         self._views: Dict[str, _ManagedView] = {}
         self._lock = threading.RLock()
+        self._find_view_timeout = max(0.0, find_view_timeout)
         _ensure_license_loaded()
 
     # ------------------------------------------------------------------
@@ -207,15 +208,13 @@ class BinaryNinjaService:
 
         if existing_view is None:
             existing_view = self._find_existing_view(resolved)
-        if existing_view is None and self._can_query_open_views():
-            wait_timeout = float(os.getenv("ROBONINJA_FIND_VIEW_TIMEOUT", "5.0"))
-            if wait_timeout > 0:
-                self._log.debug(
-                    "Waiting up to %.2fs for Binary Ninja to expose %s via get_open_views",
-                    wait_timeout,
-                    resolved,
-                )
-            deadline = time.time() + max(0.0, wait_timeout)
+        if existing_view is None and self._can_query_open_views() and self._find_view_timeout > 0:
+            self._log.debug(
+                "Waiting up to %.2fs for Binary Ninja to expose %s via get_open_views",
+                self._find_view_timeout,
+                resolved,
+            )
+            deadline = time.time() + self._find_view_timeout
             while time.time() < deadline:
                 time.sleep(0.05)
                 existing_view = self._find_existing_view(resolved)

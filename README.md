@@ -39,11 +39,10 @@ CLI flags control the RoboNinja launcher:
 - `--port PORT` – port for that SSE server (default `18765`).
 - `--timeout SECONDS` – seconds to wait for the SSE bridge before giving up (default `45`).
 
-# Plugin environment
+### Plugin behaviour
 
-- `ROBONINJA_MCP_HOST` / `ROBONINJA_MCP_PORT` – bind address for the plugin-hosted SSE server (defaults `127.0.0.1` / `18765`).
-- `ROBONINJA_DISABLE_MCP_SERVER` – skip starting the SSE server thread inside Binary Ninja if you only want the GUI plug-in features.
-- `ROBONINJA_DISABLE_AUTO_MCP_INSTALL` – prevent the plugin from installing `mcp[cli]` in its private venv on first launch.
+- Hosts an MCP SSE server on `127.0.0.1:18765` by default so external agents can connect.
+- Automatically installs `mcp[cli]` into a private virtualenv the first time it loads if the package is missing.
 
 ### Licensing options
 
@@ -142,8 +141,8 @@ The plugin registers:
 
 Once attached, the plugin automatically:
 
-- Starts an MCP SSE server on `ROBONINJA_MCP_HOST:ROBONINJA_MCP_PORT`.
-- Auto-installs `mcp[cli]` into a private virtualenv unless `ROBONINJA_DISABLE_AUTO_MCP_INSTALL=1`.
+- Starts an MCP SSE server on `127.0.0.1:18765`.
+- Auto-installs `mcp[cli]` into a private virtualenv if the package is missing.
 - Tracks the active BinaryView so CLI sessions can reuse it.
 
 A minimal sample plugin lives in `binja_sample_plugin/` for reference.
@@ -176,7 +175,7 @@ A minimal sample plugin lives in `binja_sample_plugin/` for reference.
 - **License errors** – Set `BN_LICENSE`, `BN_LICENSE_PATH`, or Binary Ninja’s built-in license location before launching. Headless mode requires a Commercial/Ultimate license.
 - **`bn_open` reports “GUI has not opened this file yet”** – Either open the binary in the GUI first or call `bn_open` with `allow_create=True`.
 - **Proxy timeouts** – Increase `roboninja launch --timeout …` or `roboninja proxy --timeout …` for slower environments.
-- **No SSE server from the plugin** – Ensure `ROBONINJA_DISABLE_MCP_SERVER` is unset and that `mcp[cli]` installed successfully (check the Binary Ninja console).
+- **No SSE server from the plugin** – Check the Binary Ninja console for startup or `mcp[cli]` installation errors; the plugin starts the server automatically at launch.
 
 ## Development
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import subprocess
 import sys
 import threading
@@ -65,10 +64,6 @@ def _ensure_mcp_available() -> bool:
         return False
     _MCP_SETUP_ATTEMPTED = True
 
-    if os.getenv("ROBONINJA_DISABLE_AUTO_MCP_INSTALL"):
-        log.warning("MCP package missing and auto-install disabled")
-        return False
-
     venv_path = Path(__file__).resolve().parent / ".roboninja_venv"
     try:
         if not venv_path.exists():
@@ -120,9 +115,6 @@ def _ensure_roboninja_on_path() -> None:
 
 def _start_mcp_server() -> None:
     global _MCP_THREAD
-    if os.getenv("ROBONINJA_DISABLE_MCP_SERVER"):
-        log.info("ROBONINJA_DISABLE_MCP_SERVER is set; skipping MCP server startup")
-        return
     if _MCP_THREAD is not None and _MCP_THREAD.is_alive():
         log.debug("MCP server thread already running; skipping startup")
         return
@@ -139,8 +131,8 @@ def _start_mcp_server() -> None:
         log.warning("RoboNinja MCP server unavailable: %s", exc)
         return
 
-    host = os.getenv("ROBONINJA_MCP_HOST", "127.0.0.1")
-    port = int(os.getenv("ROBONINJA_MCP_PORT", "18765"))
+    host = "127.0.0.1"
+    port = 18765
     log.info(
         "Starting RoboNinja MCP server thread targeting %s:%s (transport=sse)",
         host,
