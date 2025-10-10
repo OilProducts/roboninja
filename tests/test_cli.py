@@ -1,3 +1,4 @@
+import argparse
 import os
 import subprocess
 from pathlib import Path
@@ -53,12 +54,23 @@ def test_run_with_binary_argument_uses_launch(monkeypatch, tmp_path):
 
     recorded = {}
 
-    def fake_launch(argv):
-        recorded['argv'] = list(argv)
+    def fake_launch_session(binary_path, *, bn_path, host, port, timeout, extra_args):
+        recorded['binary'] = binary_path
+        recorded['bn_path'] = bn_path
+        recorded['host'] = host
+        recorded['port'] = port
+        recorded['timeout'] = timeout
+        recorded['extra_args'] = extra_args
 
-    monkeypatch.setattr(cli, '_launch_from_cli', fake_launch)
+    monkeypatch.setattr(cli, '_launch_session', fake_launch_session)
     cli.run([str(binary)])
-    assert recorded['argv'] == [str(binary)]
+
+    assert recorded['binary'] == binary.resolve()
+    assert recorded['bn_path'] is None
+    assert recorded['host'] == '127.0.0.1'
+    assert recorded['port'] == 18765
+    assert recorded['timeout'] == 45.0
+    assert recorded['extra_args'] == []
 
 
 def test_locate_binaryninja_prefers_env(tmp_path, monkeypatch):
@@ -71,7 +83,7 @@ def test_locate_binaryninja_prefers_env(tmp_path, monkeypatch):
     assert result == executable
 
 
-def test_launch_from_cli_passes_extra_args(monkeypatch, tmp_path):
+def test_launch_handler_passes_extra_args(monkeypatch, tmp_path):
     binary = tmp_path / 'program.bin'
     binary.write_text('dummy')
 
@@ -87,7 +99,16 @@ def test_launch_from_cli_passes_extra_args(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cli, '_launch_session', fake_launch_session)
 
-    cli._launch_from_cli([str(binary), '--host', '0.0.0.0', '--', '--headless'])
+    args = argparse.Namespace(
+        binary=str(binary),
+        bn_path=None,
+        host='0.0.0.0',
+        port=18765,
+        timeout=45.0,
+        binary_args=['--', '--headless'],
+    )
+
+    cli._handle_launch(args)
 
     assert recorded['binary'] == binary.resolve()
     assert recorded['bn_path'] is None

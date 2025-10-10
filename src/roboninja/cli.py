@@ -318,11 +318,58 @@ def _auto_open_view(host: str, port: int, path: Path, timeout: float) -> Optiona
     return anyio.run(_call_bn_open, url, path, timeout)
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="roboninja")
-    subparsers = parser.add_subparsers(dest="command")
+def _build_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
+    parser = argparse.ArgumentParser(
+        prog="roboninja",
+        description="RoboNinja Binary Ninja MCP helpers and CLI utilities",
+    )
+    subparsers = parser.add_subparsers(dest="command", metavar="command")
 
-    serve_parser = subparsers.add_parser("serve", help="Run the RoboNinja MCP server")
+    launch_parser = subparsers.add_parser(
+        "launch",
+        help="Launch Binary Ninja on a target binary and ensure the MCP bridge is ready",
+        description="Launch Binary Ninja on a target binary and ensure the MCP bridge is ready.",
+    )
+    launch_parser.add_argument(
+        "binary",
+        nargs="?",
+        help="Path to the binary to open in Binary Ninja (omit to run the stdio server)",
+    )
+    launch_parser.add_argument(
+        "--bn-path",
+        dest="bn_path",
+        default=None,
+        help="Path to the Binary Ninja executable (defaults to auto-detect)",
+    )
+    launch_parser.add_argument(
+        "--host",
+        default=os.getenv("ROBONINJA_MCP_HOST", "127.0.0.1"),
+        help="Host where the RoboNinja MCP server listens",
+    )
+    launch_parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.getenv("ROBONINJA_MCP_PORT", "18765")),
+        help="Port for the RoboNinja MCP server",
+    )
+    launch_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=float(os.getenv("ROBONINJA_MCP_WAIT_TIMEOUT", "45")),
+        help="Seconds to wait for the MCP server before giving up",
+    )
+    launch_parser.add_argument(
+        "binary_args",
+        nargs=argparse.REMAINDER,
+        help="Additional arguments passed directly to Binary Ninja",
+    )
+    launch_parser.set_defaults(func=_handle_launch)
+
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="Run the RoboNinja MCP server (stdio transport)",
+        description="Run the RoboNinja MCP server using the stdio transport.",
+    )
     serve_parser.add_argument(
         "--transport",
         default="stdio",
@@ -330,7 +377,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Transport to use",
     )
 
-    install_parser = subparsers.add_parser("install-plugin", help="Install the Binary Ninja plugin")
+    install_parser = subparsers.add_parser(
+        "install-plugin",
+        help="Install the Binary Ninja plugin and package into the plugins directory",
+        description="Install the Binary Ninja plugin and package into the plugins directory.",
+    )
     install_parser.add_argument(
         "--dest",
         type=Path,
@@ -343,53 +394,40 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Overwrite any existing RoboNinja plugin/package",
     )
 
-    proxy_parser = subparsers.add_parser("proxy", help="Connect to the Binary Ninja-hosted MCP server")
-    proxy_parser.add_argument(
-        "--host", default="127.0.0.1", help="Host where the plugin MCP server listens",
+    proxy_parser = subparsers.add_parser(
+        "proxy",
+        help="Bridge the Binary Ninja-hosted MCP SSE server to stdio",
+        description="Bridge the Binary Ninja-hosted MCP SSE server to stdio.",
     )
     proxy_parser.add_argument(
-        "--port", type=int, default=18765, help="Port for the plugin MCP server",
-    )
-    proxy_parser.add_argument(
-        "--timeout", type=float, default=30.0, help="Seconds to wait when connecting to the SSE endpoint",
-    )
-
-    return parser
-
-
-def _launch_from_cli(argv: list[str]) -> None:
-    parser = argparse.ArgumentParser(prog="roboninja")
-    parser.add_argument("binary", help="Path to the binary to open in Binary Ninja")
-    parser.add_argument(
-        "--bn-path",
-        dest="bn_path",
-        default=None,
-        help="Path to the Binary Ninja executable (defaults to auto-detect)",
-    )
-    parser.add_argument(
         "--host",
-        default=os.getenv("ROBONINJA_MCP_HOST", "127.0.0.1"),
-        help="Host where the RoboNinja MCP server listens",
+        default="127.0.0.1",
+        help="Host where the plugin MCP server listens",
     )
-    parser.add_argument(
+    proxy_parser.add_argument(
         "--port",
         type=int,
-        default=int(os.getenv("ROBONINJA_MCP_PORT", "18765")),
-        help="Port for the RoboNinja MCP server",
+        default=18765,
+        help="Port for the plugin MCP server",
     )
-    parser.add_argument(
+    proxy_parser.add_argument(
         "--timeout",
         type=float,
-        default=float(os.getenv("ROBONINJA_MCP_WAIT_TIMEOUT", "45")),
-        help="Seconds to wait for the MCP server before giving up",
+        default=30.0,
+        help="Seconds to wait when connecting to the SSE endpoint",
     )
-    parser.add_argument(
-        "binary_args",
-        nargs=argparse.REMAINDER,
-        help="Additional arguments passed directly to Binary Ninja",
-    )
+    proxy_parser.set_defaults(func=_handle_proxy)
 
-    args = parser.parse_args(argv)
+    serve_parser.set_defaults(func=_handle_serve)
+    install_parser.set_defaults(func=_handle_install_plugin)
+
+    return parser, launch_parser
+
+
+def _handle_launch(args: argparse.Namespace) -> None:
+    if not args.binary:
+        server.main(None)
+        return
 
     binary_path = Path(args.binary).expanduser().resolve()
     if not binary_path.exists():
@@ -418,53 +456,56 @@ def _launch_from_cli(argv: list[str]) -> None:
         sys.exit(130)
 
 
+def _handle_proxy(args: argparse.Namespace) -> None:
+    try:
+        _run_proxy_bridge(args.host, args.port, timeout=args.timeout)
+    except Exception as exc:
+        log.exception("Proxy bridge failed")
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _handle_install_plugin(args: argparse.Namespace) -> None:
+    try:
+        plugin_path = install_plugin(destination=args.dest, force=args.force)
+    except FileExistsError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        log.exception("Failed to install RoboNinja plugin")
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    print(f"Installed RoboNinja plugin to {plugin_path}")
+
+
+def _handle_serve(args: argparse.Namespace) -> None:
+    server_args = []
+    if hasattr(args, "transport") and args.transport:
+        server_args.extend(["--transport", args.transport])
+    server.main(server_args)
+
+
 def run(argv: Optional[list[str]] = None) -> None:
-    argv = list(sys.argv[1:] if argv is None else argv)
+    argv_list = list(sys.argv[1:] if argv is None else argv)
+    parser, launch_parser = _build_parser()
+    command_names = {"launch", "serve", "proxy", "install-plugin"}
 
-    known_commands = {"install-plugin", "proxy", "serve"}
-    if argv:
-        first = argv[0]
-        if first not in known_commands:
-            _launch_from_cli(argv)
-            return
-
-    parser = _build_parser()
-    args = parser.parse_args(argv)
-
-    if args.command == "install-plugin":
-        try:
-            plugin_path = install_plugin(destination=args.dest, force=args.force)
-        except FileExistsError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
-            sys.exit(1)
-        except Exception as exc:
-            log.exception("Failed to install RoboNinja plugin")
-            print(f"Error: {exc}", file=sys.stderr)
-            sys.exit(1)
-        print(f"Installed RoboNinja plugin to {plugin_path}")
+    if not argv_list:
+        args = launch_parser.parse_args([])
+        args.func(args)
         return
 
-    if args.command == "proxy":
-        try:
-            _run_proxy_bridge(args.host, args.port, timeout=args.timeout)
-        except Exception as exc:
-            log.exception("Proxy bridge failed")
-            print(f"Error: {exc}", file=sys.stderr)
-            sys.exit(1)
+    if argv_list[0] in ("-h", "--help"):
+        parser.parse_args(argv_list)  # argparse prints help and exits
         return
 
-    if args.command == 'serve':
-        server_args = []
-        if hasattr(args, 'transport') and args.transport:
-            server_args.extend(['--transport', args.transport])
-        server.main(server_args)
+    if argv_list[0] in command_names:
+        args = parser.parse_args(argv_list)
+        args.func(args)
         return
 
-    if args.command is None:
-        server.main(None)
-        return
-
-    parser.print_help()
+    args = launch_parser.parse_args(argv_list)
+    args.func(args)
 
 
 __all__ = ["run", "install_plugin"]
