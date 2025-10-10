@@ -8,8 +8,6 @@ This plugin registers a helper command under `RoboNinja → Summarize Functions`
 
 The command relies on the `roboninja` Python package (which bundles the MCP server and service helpers). If the package is unavailable, or Binary Ninja cannot expose the underlying file path, the plugin shows an error explaining what went wrong.
 
-During development you can point the plugin at this repository without installing the package by setting `ROBONINJA_SOURCE` to your checkout's `src` directory.
-
 ## Installation
 1. (Recommended) Run `roboninja install-plugin` from this repository or an installed package to copy both the plugin and the RoboNinja Python package into your Binary Ninja plugins directory. For example:
    ```bash

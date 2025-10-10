@@ -39,14 +39,11 @@ CLI flags control the RoboNinja launcher:
 - `--port PORT` – port for that SSE server (default `18765`).
 - `--timeout SECONDS` – seconds to wait for the SSE bridge before giving up (default `45`).
 
-### Plugin environment
+# Plugin environment
 
-| Variable | Purpose | Default |
-| --- | --- | --- |
-| `ROBONINJA_MCP_HOST` / `ROBONINJA_MCP_PORT` | Bind address for the plugin-hosted SSE server | `127.0.0.1` / `18765` |
-| `ROBONINJA_DISABLE_MCP_SERVER` | Skip starting the SSE server inside Binary Ninja | unset (server starts) |
-| `ROBONINJA_DISABLE_AUTO_MCP_INSTALL` | Prevent automatic `pip install mcp[cli]` in the plugin’s private venv | unset (auto-install enabled) |
-| `ROBONINJA_SOURCE` | Add a RoboNinja checkout to `sys.path` for in-place development | unset |
+- `ROBONINJA_MCP_HOST` / `ROBONINJA_MCP_PORT` – bind address for the plugin-hosted SSE server (defaults `127.0.0.1` / `18765`).
+- `ROBONINJA_DISABLE_MCP_SERVER` – skip starting the SSE server thread inside Binary Ninja if you only want the GUI plug-in features.
+- `ROBONINJA_DISABLE_AUTO_MCP_INSTALL` – prevent the plugin from installing `mcp[cli]` in its private venv on first launch.
 
 ### Licensing options
 

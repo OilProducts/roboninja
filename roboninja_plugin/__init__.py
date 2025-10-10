@@ -100,15 +100,12 @@ def _ensure_mcp_available() -> bool:
 
 
 def _ensure_roboninja_on_path() -> None:
-    candidates: list[Path] = []
-    env = os.getenv("ROBONINJA_SOURCE")
-    if env:
-        candidates.append(Path(env))
-
     here = Path(__file__).resolve().parent
-    candidates.append(here / "roboninja")
-    candidates.append(here.parent / "roboninja")
-    candidates.append(here.parent / "src")
+    candidates = [
+        here / "roboninja",
+        here.parent / "roboninja",
+        here.parent / "src",
+    ]
 
     for candidate in candidates:
         try:
