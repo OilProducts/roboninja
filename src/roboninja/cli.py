@@ -81,6 +81,10 @@ def install_plugin(
 def _default_binaryninja_locations() -> list[Path]:
     candidates: list[Path] = []
 
+    env_path = os.getenv("BINARYNINJA_PATH")
+    if env_path:
+        candidates.append(Path(env_path))
+
     if sys.platform == "darwin":
         candidates.extend(
             [

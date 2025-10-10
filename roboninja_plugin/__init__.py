@@ -53,6 +53,11 @@ def _ensure_mcp_available() -> bool:
     if _MCP_READY:
         return True
 
+    venv_path = Path(__file__).resolve().parent / ".roboninja_venv"
+    site_dir = _venv_site_packages(venv_path)
+    if site_dir.exists() and str(site_dir) not in sys.path:
+        sys.path.insert(0, str(site_dir))
+
     try:
         import mcp.server.fastmcp  # type: ignore
         _MCP_READY = True
@@ -64,7 +69,6 @@ def _ensure_mcp_available() -> bool:
         return False
     _MCP_SETUP_ATTEMPTED = True
 
-    venv_path = Path(__file__).resolve().parent / ".roboninja_venv"
     try:
         if not venv_path.exists():
             venv.EnvBuilder(with_pip=True).create(str(venv_path))
@@ -82,7 +86,6 @@ def _ensure_mcp_available() -> bool:
             check=True,
         )
 
-        site_dir = _venv_site_packages(venv_path)
         if site_dir.exists() and str(site_dir) not in sys.path:
             sys.path.insert(0, str(site_dir))
 

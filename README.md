@@ -39,6 +39,8 @@ CLI flags control the RoboNinja launcher:
 - `--port PORT` – port for that SSE server (default `18765`).
 - `--timeout SECONDS` – seconds to wait for the SSE bridge before giving up (default `45`).
 
+You can also set `BINARYNINJA_PATH` to point at the Binary Ninja executable; the CLI will honor it if provided.
+
 ### Plugin behaviour
 
 - Hosts an MCP SSE server on `127.0.0.1:18765` by default so external agents can connect.
