@@ -21,8 +21,6 @@ from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.shared.message import SessionMessage
 
-from . import server
-
 
 log = logging.getLogger(__name__)
 
@@ -426,7 +424,9 @@ def _build_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
 
 def _handle_launch(args: argparse.Namespace) -> None:
     if not args.binary:
-        server.main(None)
+        from . import server as server_module
+
+        server_module.main(None)
         return
 
     binary_path = Path(args.binary).expanduser().resolve()
@@ -479,10 +479,12 @@ def _handle_install_plugin(args: argparse.Namespace) -> None:
 
 
 def _handle_serve(args: argparse.Namespace) -> None:
+    from . import server as server_module
+
     server_args = []
     if hasattr(args, "transport") and args.transport:
         server_args.extend(["--transport", args.transport])
-    server.main(server_args)
+    server_module.main(server_args)
 
 
 def run(argv: Optional[list[str]] = None) -> None:

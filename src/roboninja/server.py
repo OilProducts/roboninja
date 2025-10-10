@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import argparse
-import functools
 import json
 import logging
 import os
-import threading
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -40,16 +38,12 @@ except Exception as exc:  # pragma: no cover
 class Settings:
     """Runtime configuration derived from environment variables."""
 
-    name: str
     log_level: str
-    rate_limit_per_min: int
 
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
-            name=os.getenv("SERVER_NAME", "roboninja-server"),
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
-            rate_limit_per_min=int(os.getenv("RATE_LIMIT_PER_MIN", "120")),
         )
 
 
@@ -68,30 +62,13 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False)
 
 
-class RateLimiter:
-    """Process-local rate limiter that tracks a per-minute window."""
-
-    def __init__(self, limit_per_min: int):
-        self.limit = max(1, limit_per_min)
-        self.lock = threading.Lock()
-        self.window_start = int(time.time() // 60)
-        self.count = 0
-
-    def allow(self) -> bool:
-        now_min = int(time.time() // 60)
-        with self.lock:
-            if now_min != self.window_start:
-                self.window_start = now_min
-                self.count = 0
-            if self.count < self.limit:
-                self.count += 1
-                return True
-            return False
-
-
 def _configure_logging(log_level: str) -> logging.Logger:
     handler = logging.StreamHandler()
-    handler.setFormatter(JsonFormatter())
+    force_plain = os.getenv("ROBONINJA_FORCE_PLAIN_LOGS") == "1"
+    if not force_plain and not handler.stream.isatty():
+        handler.setFormatter(JsonFormatter())
+    else:
+        handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
     root_logger = logging.getLogger()
     root_logger.setLevel(getattr(logging, log_level, logging.INFO))
     root_logger.handlers[:] = [handler]
@@ -100,21 +77,6 @@ def _configure_logging(log_level: str) -> logging.Logger:
     logging.getLogger("mcp.server.lowlevel").setLevel(logging.WARNING)
 
     return logging.getLogger("mcp.server")
-
-
-def _ratelimited(limiter: RateLimiter):
-    def decorator(fn):
-        @functools.wraps(fn)
-        def wrapper(*args, **kwargs):
-            if not limiter.allow():
-                raise RuntimeError(
-                    f"Rate limit exceeded ({limiter.limit}/min). Try again later."
-                )
-            return fn(*args, **kwargs)
-
-        return wrapper
-
-    return decorator
 
 
 def _bn_log(level: str, message: str) -> None:
@@ -218,11 +180,8 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
 
     settings = settings or Settings.from_env()
     log = _configure_logging(settings.log_level)
-    limiter = RateLimiter(settings.rate_limit_per_min)
+    app = FastMCP("roboninja-server")
 
-    app = FastMCP(settings.name)
-
-    ratelimited = _ratelimited(limiter)
     try:
         bn_service = get_service_singleton()
         bn_error: Optional[Exception] = None
@@ -240,7 +199,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         return bn_service
 
     @app.tool()
-    @ratelimited
     def bn_open(
         path: str,
         update_analysis: bool = True,
@@ -271,7 +229,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         return {"ok": True, "view": summary}
 
     @app.tool()
-    @ratelimited
     def bn_list() -> dict:
         """List active Binary Ninja views."""
 
@@ -280,7 +237,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         return _wrap_service_call(service.list_views, tool_name="bn_list")
 
     @app.tool()
-    @ratelimited
     def bn_close(handle: str) -> dict:
         """Close a Binary Ninja view by handle."""
 
@@ -292,7 +248,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         )
 
     @app.tool()
-    @ratelimited
     def bn_functions(
         handle: str,
         name_contains: Optional[str] = None,
@@ -315,7 +270,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         )
 
     @app.tool()
-    @ratelimited
     def bn_function_summary(handle: str, function: str) -> dict:
         """Detailed summary for a specific function."""
 
@@ -327,7 +281,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         )
 
     @app.tool()
-    @ratelimited
     def bn_hlil(
         handle: str,
         function: str,
@@ -350,7 +303,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         )
 
     @app.tool()
-    @ratelimited
     def bn_basic_blocks(handle: str, function: str) -> dict:
         """List basic blocks for a function."""
 
@@ -362,7 +314,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         )
 
     @app.tool()
-    @ratelimited
     def bn_rename_function(handle: str, function: str, new_name: str) -> dict:
         """Rename a Binary Ninja function to a new symbolic name."""
 
@@ -377,7 +328,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         )
 
     @app.tool()
-    @ratelimited
     def bn_set_comment(handle: str, address: str | int, text: str) -> dict:
         """Attach a repeatable comment at the specified address."""
 
@@ -393,7 +343,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         )
 
     @app.tool()
-    @ratelimited
     def bn_clear_comment(handle: str, address: str | int) -> dict:
         """Clear any comment at the given address."""
 
@@ -406,7 +355,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         )
 
     @app.tool()
-    @ratelimited
     def bn_disassemble(handle: str, address: str | int, count: int = 1) -> dict:
         """Return disassembly text starting at *address* for *count* instructions."""
 
@@ -425,7 +373,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         )
 
     @app.tool()
-    @ratelimited
     def bn_code_refs(handle: str, address: str | int, max_results: int | None = None) -> dict:
         """List code references targeting *address*."""
 
@@ -441,7 +388,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         )
 
     @app.tool()
-    @ratelimited
     def bn_data_refs(handle: str, address: str | int, max_results: int | None = None) -> dict:
         """List data references targeting *address*."""
 
@@ -457,7 +403,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         )
 
     @app.tool()
-    @ratelimited
     def bn_strings(handle: str, min_length: int = 4) -> dict:
         """Extract strings from the view."""
 
@@ -469,7 +414,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         )
 
     @app.tool()
-    @ratelimited
     def bn_find_strings(
         handle: str,
         query: str | None = None,
@@ -491,7 +435,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         )
 
     @app.tool()
-    @ratelimited
     def bn_symbols(handle: str, symbol_type: Optional[str] = None) -> dict:
         """Enumerate symbols from the view."""
 
@@ -503,7 +446,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         )
 
     @app.tool()
-    @ratelimited
     def bn_read(handle: str, address: str, length: int) -> dict:
         """Read bytes at an address from the view."""
 

@@ -1,6 +1,6 @@
 # RoboNinja MCP Server
 
-RoboNinja is a Model Context Protocol (MCP) server that exposes Binary Ninja® analysis features to MCP-compatible agents (including the official `mcp` CLI and Codex). The package exports a ready-to-use `FastMCP` application named `mcp`, JSON-structured logging, and a per-minute rate limiter to keep downstream tools predictable.
+RoboNinja is a Model Context Protocol (MCP) server that exposes Binary Ninja® analysis features to MCP-compatible agents (including the official `mcp` CLI and Codex). The package exports a ready-to-use `FastMCP` application named `mcp` plus JSON-structured logging for downstream tooling.
 
 ## Prerequisites
 
@@ -36,9 +36,9 @@ PY
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `SERVER_NAME` | Friendly name advertised by the FastMCP app | `roboninja-server` |
 | `LOG_LEVEL` | Logging verbosity (JSON output) | `INFO` |
-| `RATE_LIMIT_PER_MIN` | Requests allowed per minute (process-local) | `120` |
+| `ROBONINJA_FORCE_PLAIN_LOGS` | Set to `1` to force human-readable logs even when not writing to a TTY | unset |
+| `ROBONINJA_SSE_POST_TIMEOUT` | Seconds to wait when posting MCP messages to an SSE endpoint before surfacing an error | `60` |
 | `BINARYNINJA_PATH` | Explicit path to the Binary Ninja executable (used by the CLI auto-launcher) | auto-detected |
 | `ROBONINJA_FIND_VIEW_TIMEOUT` | Seconds `bn_open` waits for the GUI to expose an already-open BinaryView before giving up | `5.0` |
 
@@ -180,12 +180,9 @@ A minimal sample plugin lives in `binja_sample_plugin/` for reference.
 | `bn_set_comment` / `bn_clear_comment` | Manage comments at addresses | Works with function or global scopes. |
 | `bn_read` | Read bytes from the view | Returns hex-encoded payload. |
 
-All tool calls are wrapped with per-minute rate limiting and emit JSON-formatted request/response logs.
-
 ## Server behaviour
 
 - **Logging** – JSON lines include timestamp, level, message, and logger name (`LOG_LEVEL` controls verbosity). Tool requests/results log extra metadata (payload sizes, durations) at DEBUG.
-- **Rate limiting** – The configurable limiter (`RATE_LIMIT_PER_MIN`) guards every tool invocation with a shared per-process quota.
 
 ## Troubleshooting
 
