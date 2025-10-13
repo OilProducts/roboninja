@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event, current_thread
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 LOG = logging.getLogger(__name__)
@@ -572,6 +572,111 @@ class BinaryNinjaService:
             "name": new_name,
         }
 
+    def list_variables(self, handle: str, identifier: str) -> Dict[str, Any]:
+        view = self._get_view(handle)
+        func = self._resolve_function(view, identifier)
+
+        def _collect() -> Dict[str, Any]:
+            parameters = [
+                self._describe_variable(var, kind="parameter", index=index)
+                for index, var in enumerate(getattr(func, "parameter_vars", []) or [])
+            ]
+
+            stack_vars = [
+                self._describe_variable(var, kind="stack")
+                for var in getattr(func, "stack_layout", []) or []
+            ]
+
+            variables = [
+                self._describe_variable(var, kind="variable", index=index)
+                for index, var in enumerate(getattr(func, "vars", []) or [])
+            ]
+
+            return {
+                "handle": handle,
+                "function": getattr(func, "name", identifier),
+                "parameters": parameters,
+                "stack": stack_vars,
+                "variables": variables,
+            }
+
+        return self._call_on_main_thread(_collect)
+
+    def rename_variable(
+        self,
+        handle: str,
+        identifier: str,
+        variable_id: str,
+        new_name: str,
+        *,
+        new_type: Any = None,
+    ) -> Dict[str, Any]:
+        view = self._get_view(handle)
+        func = self._resolve_function(view, identifier)
+        variable = self._resolve_variable_identifier(func, variable_id)
+        type_override = self._parse_type_spec(view, new_type)
+        effective_type = self._rename_variable_common(func, variable, new_name=new_name, type_override=type_override)
+
+        return {
+            "handle": handle,
+            "function": getattr(func, "name", identifier),
+            "variable": variable_id,
+            "name": new_name,
+            "type": self._stringify(effective_type),
+        }
+
+    def rename_stack_variable(
+        self,
+        handle: str,
+        identifier: str,
+        offset: int | str,
+        new_name: str,
+        *,
+        new_type: Any = None,
+    ) -> Dict[str, Any]:
+        offset_value = self._coerce_int(offset)
+        return self.rename_variable(
+            handle,
+            identifier,
+            f"stack:{offset_value}",
+            new_name,
+            new_type=new_type,
+        )
+
+    def define_data_variable(
+        self,
+        handle: str,
+        address: int | str,
+        var_type: Any,
+        *,
+        name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        view = self._get_view(handle)
+        addr = self._coerce_int(address)
+        parsed_type = self._parse_type_spec(view, var_type)
+
+        def _apply():
+            return view.define_user_data_var(addr, parsed_type, name)
+
+        try:
+            result = self._call_on_main_thread(_apply)
+        except Exception as exc:  # pragma: no cover - BN specific failures
+            self._log.debug(
+                "Failed to define data variable at 0x%x on handle %s: %s",
+                addr,
+                handle,
+                exc,
+                exc_info=True,
+            )
+            raise BinaryNinjaServiceError(f"Unable to define data variable: {exc}") from exc
+
+        return {
+            "handle": handle,
+            "address": _format_addr(addr),
+            "name": getattr(result, "name", name),
+            "type": self._stringify(getattr(result, "type", parsed_type)),
+        }
+
     def set_comment(self, handle: str, address: int, text: str) -> Dict[str, Any]:
         if text is None:
             raise ValueError("text may not be None")
@@ -1074,3 +1179,145 @@ class BinaryNinjaService:
         except Exception as exc:  # pragma: no cover - defensive
             self._log.debug("Failed to stringify %r: %s", value, exc)
             return None
+
+    def _coerce_int(self, value: int | str) -> int:
+        if isinstance(value, int):
+            return value
+        text = str(value).strip()
+        if not text:
+            raise ValueError("Numeric value may not be empty")
+        try:
+            return int(text, 0)
+        except ValueError as exc:
+            raise ValueError(f"Invalid numeric value: {value}") from exc
+
+    def _parse_type_spec(self, view: Any, spec: Any) -> Any:
+        if spec is None:
+            return None
+
+        if binaryninja is None:
+            raise BinaryNinjaUnavailableError("Binary Ninja unavailable; cannot parse type specification")
+
+        if not isinstance(spec, str):
+            return spec
+
+        parser = getattr(view, "parse_type_string", None)
+        if not callable(parser):
+            raise BinaryNinjaServiceError("BinaryView does not support parse_type_string")
+
+        try:
+            parsed = parser(spec)
+        except Exception as exc:
+            raise BinaryNinjaServiceError(f"Failed to parse type '{spec}': {exc}") from exc
+
+        if parsed is None:
+            raise BinaryNinjaServiceError(f"Type parser returned no result for '{spec}'")
+
+        if isinstance(parsed, tuple):
+            parsed_type = parsed[0]
+            if parsed_type is None:
+                raise BinaryNinjaServiceError(f"Type parser did not return a type for '{spec}'")
+            return parsed_type
+
+        return parsed
+
+    def _describe_variable(
+        self,
+        var: Any,
+        *,
+        kind: str,
+        index: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        source_type = getattr(getattr(var, "source_type", None), "name", None)
+        storage = getattr(var, "storage", None)
+        identifier: Optional[str]
+        if kind == "parameter":
+            identifier = f"param:{index}"
+        elif kind == "stack":
+            identifier = f"stack:{storage}"
+        else:
+            identifier = f"var:{index}"
+
+        return {
+            "id": identifier,
+            "kind": kind,
+            "index": index,
+            "storage": storage,
+            "source_type": source_type or self._stringify(getattr(var, "source_type", None)),
+            "name": getattr(var, "name", None),
+            "type": self._stringify(getattr(var, "type", None)),
+        }
+
+    def _resolve_variable_identifier(self, func: Any, variable_id: str) -> Any:
+        if not variable_id:
+            raise ValueError("variable identifier must be provided")
+
+        if variable_id.startswith("param:"):
+            index = self._coerce_int(variable_id.split(":", 1)[1])
+            params: List[Any] = list(getattr(func, "parameter_vars", []) or [])
+            if index < 0 or index >= len(params):
+                raise BinaryNinjaServiceError(f"Parameter index out of range: {index}")
+            return params[index]
+
+        if variable_id.startswith("var:"):
+            index = self._coerce_int(variable_id.split(":", 1)[1])
+            vars_list: List[Any] = list(getattr(func, "vars", []) or [])
+            if index < 0 or index >= len(vars_list):
+                raise BinaryNinjaServiceError(f"Variable index out of range: {index}")
+            return vars_list[index]
+
+        if variable_id.startswith("stack:"):
+            offset_text = variable_id.split(":", 1)[1]
+            offset = self._coerce_int(offset_text)
+            addr = getattr(func, "start", 0)
+            stack_var = None
+
+            def _lookup() -> Any:
+                return func.get_stack_var_at_frame_offset(offset, addr)
+
+            try:
+                stack_var = self._call_on_main_thread(_lookup)
+            except Exception as exc:  # pragma: no cover - BN specific failures
+                self._log.debug(
+                    "Failed to resolve stack variable at offset %s in %s: %s",
+                    offset_text,
+                    getattr(func, "name", None),
+                    exc,
+                    exc_info=True,
+                )
+                raise BinaryNinjaServiceError(f"Unable to resolve stack variable at offset {offset_text}") from exc
+
+            if stack_var is None:
+                raise BinaryNinjaServiceError(f"No stack variable defined at offset {offset_text}")
+
+            return stack_var
+
+        raise ValueError(f"Unsupported variable identifier '{variable_id}'")
+
+    def _rename_variable_common(
+        self,
+        func: Any,
+        variable: Any,
+        *,
+        new_name: str,
+        type_override: Any,
+    ) -> Any:
+        if not new_name or not new_name.strip():
+            raise ValueError("new_name must be a non-empty string")
+
+        def _apply() -> Any:
+            effective_type = type_override or getattr(variable, "type", None)
+            func.create_user_var(variable, effective_type, new_name)
+            return effective_type
+
+        try:
+            return self._call_on_main_thread(_apply)
+        except Exception as exc:  # pragma: no cover - BN specific failures
+            self._log.debug(
+                "Failed to rename variable %s in %s: %s",
+                getattr(variable, "name", None),
+                getattr(func, "name", None),
+                exc,
+                exc_info=True,
+            )
+            raise BinaryNinjaServiceError(f"Unable to rename variable: {exc}") from exc

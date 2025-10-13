@@ -153,19 +153,15 @@ A minimal sample plugin lives in `binja_sample_plugin/` for reference.
 
 | Tool | Purpose | Notes |
 | --- | --- | --- |
-| `bn_open` | Open or attach to a BinaryView | Returns handle plus architecture, platform, entry point, and analysis progress. Set `allow_create=True` to load without the GUI. |
 | `bn_list` | Enumerate active views | Includes views opened directly in the GUI. |
-| `bn_close` | Close a view by handle | Respects ownership (does not close GUI-managed views). |
 | `bn_functions` | List functions (filter by name/size) | Includes calling convention and return type. |
 | `bn_function_summary` | Detailed function metadata | Parameters, size, blocks, etc. |
 | `bn_hlil` | High Level IL listing | Optional `max_instructions`. |
-| `bn_basic_blocks` | Basic block graph summary | Includes outgoing edge metadata. |
-| `bn_strings` / `bn_find_strings` | Extract or search strings | `bn_find_strings` enforces positive `min_length`. |
 | `bn_symbols` | Enumerate symbols (optional type filter) | Returns binding and address data. |
 | `bn_disassemble` | Linear disassembly around an address | Positive `count` required. |
 | `bn_code_refs` / `bn_data_refs` | Cross-references to an address | Optional `max_results`, gracefully handles `0`. |
 | `bn_rename_function` | Apply a user symbol | Requires Binary Ninja symbol API. |
-| `bn_set_comment` / `bn_clear_comment` | Manage comments at addresses | Works with function or global scopes. |
+| `bn_set_comment` | Attach or overwrite comments | Works with function or global scopes. |
 | `bn_read` | Read bytes from the view | Returns hex-encoded payload. |
 
 ## Server behaviour
@@ -175,7 +171,6 @@ A minimal sample plugin lives in `binja_sample_plugin/` for reference.
 ## Troubleshooting
 
 - **License errors** – Set `BN_LICENSE`, `BN_LICENSE_PATH`, or Binary Ninja’s built-in license location before launching. Headless mode requires a Commercial/Ultimate license.
-- **`bn_open` reports “GUI has not opened this file yet”** – Either open the binary in the GUI first or call `bn_open` with `allow_create=True`.
 - **Proxy timeouts** – Increase `roboninja launch --timeout …` or `roboninja proxy --timeout …` for slower environments.
 - **No SSE server from the plugin** – Check the Binary Ninja console for startup or `mcp[cli]` installation errors; the plugin starts the server automatically at launch.
 

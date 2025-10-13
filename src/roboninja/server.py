@@ -228,53 +228,12 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         return bn_service
 
     @app.tool()
-    def bn_open(
-        path: str,
-        update_analysis: bool = True,
-        analysis_timeout: Optional[float] = None,
-        allow_create: bool = False,
-    ) -> dict:
-        """Open a binary with Binary Ninja and return a view handle."""
-
-        _log_tool_call(
-            "bn_open",
-            {
-                "path": path,
-                "update_analysis": update_analysis,
-                "analysis_timeout": analysis_timeout,
-                "allow_create": allow_create,
-            },
-        )
-        service = require_service()
-        summary = _wrap_service_call(
-            lambda: service.open_view(
-                path,
-                update_analysis=update_analysis,
-                analysis_timeout=analysis_timeout,
-                allow_create=allow_create,
-            ),
-            tool_name="bn_open",
-        )
-        return {"ok": True, "view": summary}
-
-    @app.tool()
     def bn_list() -> dict:
         """List active Binary Ninja views."""
 
         _log_tool_call("bn_list", {})
         service = require_service()
         return _wrap_service_call(service.list_views, tool_name="bn_list")
-
-    @app.tool()
-    def bn_close(handle: str) -> dict:
-        """Close a Binary Ninja view by handle."""
-
-        _log_tool_call("bn_close", {"handle": handle})
-        service = require_service()
-        return _wrap_service_call(
-            lambda: service.close_view(handle),
-            tool_name="bn_close",
-        )
 
     @app.tool()
     def bn_functions(
@@ -332,17 +291,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         )
 
     @app.tool()
-    def bn_basic_blocks(handle: str, function: str) -> dict:
-        """List basic blocks for a function."""
-
-        _log_tool_call("bn_basic_blocks", {"handle": handle, "function": function})
-        service = require_service()
-        return _wrap_service_call(
-            lambda: service.get_basic_blocks(handle, function),
-            tool_name="bn_basic_blocks",
-        )
-
-    @app.tool()
     def bn_rename_function(handle: str, function: str, new_name: str) -> dict:
         """Rename a Binary Ninja function to a new symbolic name."""
 
@@ -354,6 +302,105 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         return _wrap_service_call(
             lambda: service.rename_function(handle, function, new_name),
             tool_name="bn_rename_function",
+        )
+
+    @app.tool()
+    def bn_list_variables(handle: str, function: str) -> dict:
+        """Enumerate variables associated with a function."""
+
+        _log_tool_call("bn_list_variables", {"handle": handle, "function": function})
+        service = require_service()
+        return _wrap_service_call(
+            lambda: service.list_variables(handle, function),
+            tool_name="bn_list_variables",
+        )
+
+    @app.tool()
+    def bn_rename_variable(
+        handle: str,
+        function: str,
+        variable: str,
+        new_name: str,
+        new_type: str | None = None,
+    ) -> dict:
+        """Rename (and optionally retype) a function variable."""
+
+        _log_tool_call(
+            "bn_rename_variable",
+            {
+                "handle": handle,
+                "function": function,
+                "variable": variable,
+                "new_name": new_name,
+                "new_type": new_type,
+            },
+        )
+        service = require_service()
+        return _wrap_service_call(
+            lambda: service.rename_variable(
+                handle,
+                function,
+                variable,
+                new_name,
+                new_type=new_type,
+            ),
+            tool_name="bn_rename_variable",
+        )
+
+    @app.tool()
+    def bn_rename_stack_variable(
+        handle: str,
+        function: str,
+        offset: str | int,
+        new_name: str,
+        new_type: str | None = None,
+    ) -> dict:
+        """Rename a stack variable by offset."""
+
+        _log_tool_call(
+            "bn_rename_stack_variable",
+            {
+                "handle": handle,
+                "function": function,
+                "offset": str(offset),
+                "new_name": new_name,
+                "new_type": new_type,
+            },
+        )
+        service = require_service()
+        return _wrap_service_call(
+            lambda: service.rename_stack_variable(
+                handle,
+                function,
+                offset,
+                new_name,
+                new_type=new_type,
+            ),
+            tool_name="bn_rename_stack_variable",
+        )
+
+    @app.tool()
+    def bn_define_data_variable(
+        handle: str,
+        address: str | int,
+        var_type: str,
+        name: str | None = None,
+    ) -> dict:
+        """Define or rename a user data variable at the specified address."""
+
+        _log_tool_call(
+            "bn_define_data_variable",
+            {
+                "handle": handle,
+                "address": str(address),
+                "var_type": var_type,
+                "name": name,
+            },
+        )
+        service = require_service()
+        return _wrap_service_call(
+            lambda: service.define_data_variable(handle, address, var_type, name=name),
+            tool_name="bn_define_data_variable",
         )
 
     @app.tool()
@@ -369,18 +416,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         return _wrap_service_call(
             lambda: service.set_comment(handle, addr, text),
             tool_name="bn_set_comment",
-        )
-
-    @app.tool()
-    def bn_clear_comment(handle: str, address: str | int) -> dict:
-        """Clear any comment at the given address."""
-
-        _log_tool_call("bn_clear_comment", {"handle": handle, "address": str(address)})
-        service = require_service()
-        addr = _parse_address(address)
-        return _wrap_service_call(
-            lambda: service.clear_comment(handle, addr),
-            tool_name="bn_clear_comment",
         )
 
     @app.tool()
@@ -429,38 +464,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         return _wrap_service_call(
             lambda: service.get_data_references(handle, addr, max_results=max_results),
             tool_name="bn_data_refs",
-        )
-
-    @app.tool()
-    def bn_strings(handle: str, min_length: int = 4) -> dict:
-        """Extract strings from the view."""
-
-        _log_tool_call("bn_strings", {"handle": handle, "min_length": min_length})
-        service = require_service()
-        return _wrap_service_call(
-            lambda: service.get_strings(handle, min_length=min_length),
-            tool_name="bn_strings",
-        )
-
-    @app.tool()
-    def bn_find_strings(
-        handle: str,
-        query: str | None = None,
-        min_length: int = 4,
-    ) -> dict:
-        """Search strings discovered in the view."""
-
-        if min_length <= 0:
-            raise RuntimeError("min_length must be positive")
-
-        _log_tool_call(
-            "bn_find_strings",
-            {"handle": handle, "query": query, "min_length": min_length},
-        )
-        service = require_service()
-        return _wrap_service_call(
-            lambda: service.find_strings(handle, query=query, min_length=min_length),
-            tool_name="bn_find_strings",
         )
 
     @app.tool()

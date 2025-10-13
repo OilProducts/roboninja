@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import os
 import shutil
@@ -308,43 +307,15 @@ def _run_proxy_bridge(host: str, port: int, timeout: float) -> None:
         raise RuntimeError(f"Failed to connect to RoboNinja SSE server at {url}: {exc}") from exc
 
 
-async def _call_bn_open(url: str, path: Path, timeout: float) -> Optional[str]:
-    async with sse_client(url, timeout=timeout) as streams:
-        read_stream, write_stream = streams
-
-        async with ClientSession(read_stream, write_stream) as session:
-            await session.initialize()
-            result = await session.call_tool(
-                "bn_open",
-                {"path": str(path)},
-            )
-
-            data: Any = result.structuredContent
-            if data is None and result.content:
-                for block in result.content:
-                    if getattr(block, "type", None) != "text":
-                        continue
-                    try:
-                        candidate = json.loads(getattr(block, "text", ""))
-                    except Exception as exc:
-                        log.debug("Failed to parse text block as JSON: %s", exc)
-                        continue
-                    if isinstance(candidate, dict):
-                        data = candidate
-                        break
-
-            if isinstance(data, dict):
-                view = data.get("view")
-                if isinstance(view, dict):
-                    handle = view.get("handle")
-                    if isinstance(handle, str) and handle:
-                        return handle
-            return None
-
-
 def _auto_open_view(host: str, port: int, path: Path, timeout: float) -> Optional[str]:
-    url = f"http://{host}:{port}/sse"
-    return anyio.run(_call_bn_open, url, path, timeout)
+    """Placeholder for legacy auto-open behavior (deprecated)."""
+    log.debug(
+        "Auto-open skipped: bn_open tool not available (host=%s, port=%d, path=%s)",
+        host,
+        port,
+        path,
+    )
+    return None
 
 
 def _build_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
