@@ -10,10 +10,14 @@ from roboninja import cli
 
 def test_install_plugin_copies_plugin_and_package(tmp_path):
     project_root = Path(__file__).resolve().parents[1]
-    plugin_source = project_root / "roboninja_plugin"
+    plugin_source = project_root / "src" / "roboninja_plugin"
     package_source = project_root / "src" / "roboninja"
 
     destination = tmp_path / "plugins"
+    legacy_dir = destination / "roboninja"
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "sentinel.txt").write_text("old")
+
     path = cli.install_plugin(
         destination=destination,
         plugin_source=plugin_source,
@@ -21,9 +25,15 @@ def test_install_plugin_copies_plugin_and_package(tmp_path):
         force=True,
     )
 
-    assert path == destination / "roboninja_plugin"
-    assert (destination / "roboninja_plugin" / "__init__.py").exists()
-    assert (destination / "roboninja" / "binaryninja_service.py").exists()
+    plugin_root = destination / "roboninja_plugin"
+    assert path == plugin_root
+    assert (plugin_root / "__init__.py").exists()
+    assert (plugin_root / "plugin.json").exists()
+
+    vendor_roboninja = plugin_root / "vendor" / "roboninja"
+    assert (vendor_roboninja / "binaryninja_service.py").exists()
+    assert not (destination / "roboninja").exists()
+    assert not legacy_dir.exists()
 
     with pytest.raises(FileExistsError):
         cli.install_plugin(

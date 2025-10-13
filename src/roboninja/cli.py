@@ -30,7 +30,31 @@ def _default_plugin_destination() -> Path:
 
 
 def _resolve_plugin_source() -> Path:
-    return Path(__file__).resolve().parent.parent.parent / "roboninja_plugin"
+    module_path = Path(__file__).resolve()
+    candidates: list[Path] = []
+
+    try:
+        import roboninja_plugin  # type: ignore
+    except Exception:
+        pass
+    else:
+        candidates.append(Path(roboninja_plugin.__file__).resolve().parent)  # type: ignore[attr-defined]
+
+    candidates.extend(
+        [
+            module_path.parent.parent / "roboninja_plugin",  # src/ checkout layout
+            module_path.parent.parent.parent / "roboninja_plugin",  # legacy layout
+        ]
+    )
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    raise FileNotFoundError(
+        "Unable to locate the roboninja_plugin package. Checked: "
+        + ", ".join(str(candidate) for candidate in candidates)
+    )
 
 
 def _resolve_package_source() -> Path:
@@ -70,10 +94,22 @@ def install_plugin(
     destination.mkdir(parents=True, exist_ok=True)
 
     plugin_dest = destination / "roboninja_plugin"
-    package_dest = destination / "roboninja"
+    vendor_root = plugin_dest / "vendor"
+    package_dest = vendor_root / "roboninja"
+    legacy_package_dest = destination / "roboninja"
+
+    if legacy_package_dest.exists() and not force:
+        raise FileExistsError(
+            f"Legacy RoboNinja package directory exists: {legacy_package_dest}. "
+            "Remove it or re-run with '--force'."
+        )
 
     _copy_tree(plugin_source, plugin_dest, force=force)
+    vendor_root.mkdir(parents=True, exist_ok=True)
     _copy_tree(package_source, package_dest, force=force)
+
+    if legacy_package_dest.exists():
+        shutil.rmtree(legacy_package_dest)
 
     return plugin_dest
 

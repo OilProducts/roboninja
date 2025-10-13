@@ -140,10 +140,13 @@ def _log_tool_result(name: str, result: object, duration: float) -> None:
 def _parse_address(value: str | int) -> int:
     if isinstance(value, int):
         return value
-    text = value.strip()
-    if text.lower().startswith("0x"):
-        return int(text, 16)
-    return int(text)
+    text = str(value).strip()
+    try:
+        if text.lower().startswith("0x"):
+            return int(text, 16)
+        return int(text)
+    except ValueError as exc:
+        raise RuntimeError(f"Invalid address '{value}'. Provide an integer or hex string.") from exc
 
 
 def _wrap_service_call(fn, *, tool_name: Optional[str] = None):
@@ -178,6 +181,35 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
     settings = settings or Settings.from_env()
     log = _configure_logging(settings.log_level)
     app = FastMCP("roboninja-server")
+
+    extraneous_tools = (
+        "echo",
+        "kv_get",
+        "kv_set",
+        "ping",
+        "summarize_markdown",
+    )
+
+    for tool_name in extraneous_tools:
+        removed = False
+        remove_tool = getattr(app, "remove_tool", None)
+        if callable(remove_tool):
+            try:
+                remove_tool(tool_name)
+            except KeyError:
+                pass
+            except Exception as exc:  # pragma: no cover - defensive path
+                log.debug("Failed to remove tool %s via remove_tool: %s", tool_name, exc)
+            else:
+                removed = True
+
+        tools_registry = getattr(app, "tools", None)
+        if not removed and isinstance(tools_registry, dict):
+            if tools_registry.pop(tool_name, None) is not None:
+                removed = True
+
+        if removed:
+            log.debug("Removed non-Binary Ninja tool: %s", tool_name)
 
     try:
         bn_service = get_service_singleton()

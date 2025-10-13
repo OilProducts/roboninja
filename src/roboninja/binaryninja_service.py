@@ -465,7 +465,13 @@ class BinaryNinjaService:
         try:
             iterator = view.get_strings()
         except AttributeError:  # pragma: no cover - compatibility shim
-            iterator = view.strings
+            iterator = getattr(view, "strings", None)
+        except Exception as exc:  # pragma: no cover - defensive
+            self._log.debug("view.get_strings() failed: %s", exc, exc_info=True)
+            raise BinaryNinjaServiceError(f"Failed to enumerate strings: {exc}") from exc
+
+        if iterator is None:
+            iterator = []
 
         for string in iterator:
             length = getattr(string, "length", None)
@@ -487,7 +493,13 @@ class BinaryNinjaService:
         symbols = []
         filter_type = symbol_type.lower() if symbol_type else None
 
-        for symbol in view.get_symbols():
+        try:
+            symbol_iter = view.get_symbols()
+        except Exception as exc:  # pragma: no cover - defensive
+            self._log.debug("view.get_symbols() failed: %s", exc, exc_info=True)
+            raise BinaryNinjaServiceError(f"Failed to enumerate symbols: {exc}") from exc
+
+        for symbol in symbol_iter or []:
             type_name = getattr(getattr(symbol, "type", None), "name", None)
             if filter_type and (type_name or "").lower() != filter_type:
                 continue
@@ -663,7 +675,18 @@ class BinaryNinjaService:
                     exc,
                     exc_info=True,
                 )
-                raise BinaryNinjaServiceError(f"Failed to disassemble at {hex(current)}: {exc}") from exc
+                raise BinaryNinjaServiceError(
+                    f"Failed to disassemble at {hex(current)}: {exc}"
+                ) from exc
+
+            if result is None:
+                self._log.debug(
+                    "Binary Ninja returned no disassembly at 0x%x on handle %s; treating as empty",
+                    current,
+                    handle,
+                )
+                lines.append({"address": _format_addr(current), "text": "", "length": 0})
+                break
 
             if not isinstance(result, tuple) or len(result) != 2:
                 raise BinaryNinjaServiceError(
@@ -700,7 +723,7 @@ class BinaryNinjaService:
 
         try:
             refs = self._call_on_main_thread(
-                lambda: list(view.get_code_refs(address, max_items=limit))
+                lambda: view.get_code_refs(address, max_items=limit)
             )
         except Exception as exc:  # pragma: no cover
             self._log.debug(
@@ -713,7 +736,7 @@ class BinaryNinjaService:
             raise BinaryNinjaServiceError(f"Failed to enumerate code references: {exc}") from exc
 
         items = []
-        for ref in refs:
+        for ref in refs or []:
             items.append(
                 {
                     "address": _format_addr(getattr(ref, "address", None)),
@@ -745,7 +768,7 @@ class BinaryNinjaService:
 
         try:
             refs = self._call_on_main_thread(
-                lambda: list(view.get_data_refs(address, max_items=limit))
+                lambda: view.get_data_refs(address, max_items=limit)
             )
         except Exception as exc:  # pragma: no cover
             self._log.debug(
@@ -758,7 +781,7 @@ class BinaryNinjaService:
             raise BinaryNinjaServiceError(f"Failed to enumerate data references: {exc}") from exc
 
         items = []
-        for ref in refs:
+        for ref in refs or []:
             items.append(
                 {
                     "address": _format_addr(ref),

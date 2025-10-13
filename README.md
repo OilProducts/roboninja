@@ -132,7 +132,7 @@ roboninja install-plugin --dest /custom/path --force
 
 ### Manual installation
 
-Copy `roboninja_plugin/` and the `roboninja/` package into Binary Ninja’s plugin directory (e.g., `~/.binaryninja/plugins`). The CLI command above automates this process.
+Copy `src/roboninja_plugin/` into Binary Ninja’s plugin directory (e.g., `~/.binaryninja/plugins`). The CLI command above automates this process and vendors the application code under `roboninja_plugin/vendor/`.
 
 ### Available commands
 

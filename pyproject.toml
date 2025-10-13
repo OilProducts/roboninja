@@ -28,11 +28,19 @@ pythonpath = ["src"]
 [tool.hatch.build.targets.wheel]
 packages = [
     "src/roboninja",
+    "src/roboninja_plugin",
+]
+
+[tool.hatch.build.targets.wheel.package-data]
+"roboninja_plugin" = [
+    "plugin.json",
+    "README.md",
 ]
 
 [tool.hatch.build.targets.sdist]
 include = [
     "src/roboninja",
+    "src/roboninja_plugin",
     "tests",
     "README.md",
 ]

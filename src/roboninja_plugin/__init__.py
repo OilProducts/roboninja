@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import sys
 import threading
@@ -100,6 +101,8 @@ def _ensure_mcp_available() -> bool:
 def _ensure_roboninja_on_path() -> None:
     here = Path(__file__).resolve().parent
     candidates = [
+        here / "vendor",
+        here / "vendor" / "roboninja",
         here / "roboninja",
         here.parent / "roboninja",
         here.parent / "src",
