@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import time
 from typing import Annotated, Optional
 
@@ -39,11 +40,20 @@ class Settings:
 
     __slots__ = ("log_level",)
 
-    def __init__(self, log_level: str = "DEBUG") -> None:
+    def __init__(self, log_level: str = "INFO") -> None:
         self.log_level = log_level
 
     @classmethod
     def from_env(cls) -> "Settings":
+        value = (
+            os.getenv("ROBONINJA_LOG_LEVEL")
+            or os.getenv("MCP_LOG_LEVEL")
+            or os.getenv("LOG_LEVEL")
+        )
+        if value:
+            normalized = value.strip().upper()
+            if normalized in logging._nameToLevel:
+                return cls(normalized)
         return cls()
 
 
@@ -798,8 +808,9 @@ def main(argv: Optional[list[str]] = None) -> None:
         help="Transport to use",
     )
     args = parser.parse_args(argv)
+    settings = Settings.from_env()
     logging.getLogger("mcp.server").info(
-        "Starting %s via %s", Settings.from_env().name, args.transport
+        "Starting RoboNinja server (log level=%s) via %s", settings.log_level, args.transport
     )
     run_stdio()
 

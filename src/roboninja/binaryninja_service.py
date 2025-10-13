@@ -30,10 +30,6 @@ LICENSE_FILE_ENV_VARS = ("BN_LICENSE_PATH", "BINARYNINJA_LICENSE_PATH", "ROBONIN
 LICENSE_KEY_ENV_VARS = ("BN_LICENSE", "BINARYNINJA_LICENSE", "ROBONINJA_LICENSE")
 
 
-LICENSE_FILE_ENV_VARS = ("BN_LICENSE_PATH", "BINARYNINJA_LICENSE_PATH", "ROBONINJA_LICENSE_PATH")
-LICENSE_KEY_ENV_VARS = ("BN_LICENSE", "BINARYNINJA_LICENSE", "ROBONINJA_LICENSE")
-
-
 def _read_license_text() -> Optional[str]:
     for env in LICENSE_KEY_ENV_VARS:
         value = os.getenv(env)
@@ -475,7 +471,6 @@ class BinaryNinjaService:
             raise BinaryNinjaServiceError(f"Failed to enumerate symbols: {exc}") from exc
 
         for symbol in symbol_iter or []:
-            print(symbol)
             type_name = getattr(getattr(symbol, "type", None), "name", None)
             if filter_type and (type_name or "").lower() != filter_type:
                 continue

@@ -154,9 +154,10 @@ A minimal sample plugin lives in `binja_sample_plugin/` for reference.
 | Tool | Purpose | Notes |
 | --- | --- | --- |
 | `bn_list` | Enumerate active views | Includes views opened directly in the GUI. |
-| `bn_functions` | List functions (filter by name/size) | Includes calling convention and return type. |
+| `bn_functions` | List functions (filter by name/size) | Includes calling convention, return type, and now supports a `limit` (default 100). |
 | `bn_function_summary` | Detailed function metadata | Parameters, size, blocks, etc. |
-| `bn_hlil` | High Level IL listing | Optional `max_instructions`. |
+| `bn_hlil` | High Level IL listing | Optional `max_instructions` to control output size. |
+| `bn_list_variables` | Enumerate variables for a function | Uses caps on parameters/stack/locals (set to `0` for unlimited). |
 | `bn_symbols` | Enumerate symbols (optional type filter) | Returns binding and address data. |
 | `bn_disassemble` | Linear disassembly around an address | Positive `count` required. |
 | `bn_code_refs` / `bn_data_refs` | Cross-references to an address | Optional `max_results`, gracefully handles `0`. |
