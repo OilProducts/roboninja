@@ -6,7 +6,9 @@ import argparse
 import json
 import logging
 import time
-from typing import Optional
+from typing import Annotated, Optional
+
+from pydantic import Field
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -37,7 +39,7 @@ class Settings:
 
     __slots__ = ("log_level",)
 
-    def __init__(self, log_level: str = "INFO") -> None:
+    def __init__(self, log_level: str = "DEBUG") -> None:
         self.log_level = log_level
 
     @classmethod
@@ -182,35 +184,6 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
     log = _configure_logging(settings.log_level)
     app = FastMCP("roboninja-server")
 
-    extraneous_tools = (
-        "echo",
-        "kv_get",
-        "kv_set",
-        "ping",
-        "summarize_markdown",
-    )
-
-    for tool_name in extraneous_tools:
-        removed = False
-        remove_tool = getattr(app, "remove_tool", None)
-        if callable(remove_tool):
-            try:
-                remove_tool(tool_name)
-            except KeyError:
-                pass
-            except Exception as exc:  # pragma: no cover - defensive path
-                log.debug("Failed to remove tool %s via remove_tool: %s", tool_name, exc)
-            else:
-                removed = True
-
-        tools_registry = getattr(app, "tools", None)
-        if not removed and isinstance(tools_registry, dict):
-            if tools_registry.pop(tool_name, None) is not None:
-                removed = True
-
-        if removed:
-            log.debug("Removed non-Binary Ninja tool: %s", tool_name)
-
     try:
         bn_service = get_service_singleton()
         bn_error: Optional[Exception] = None
@@ -227,7 +200,10 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
             )
         return bn_service
 
-    @app.tool()
+    @app.tool(
+        name="bn_list",
+        description="List every Binary Ninja view currently tracked by the RoboNinja service.",
+    )
     def bn_list() -> dict:
         """List active Binary Ninja views."""
 
@@ -235,17 +211,45 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
         service = require_service()
         return _wrap_service_call(service.list_views, tool_name="bn_list")
 
-    @app.tool()
+    @app.tool(
+        name="bn_functions",
+        description="Enumerate functions in a Binary Ninja view with optional name and size filters.",
+    )
     def bn_functions(
-        handle: str,
-        name_contains: Optional[str] = None,
-        min_size: int = 0,
+        handle: Annotated[
+            str,
+            Field(description="Handle of the Binary Ninja view returned by `bn_list` or other tooling."),
+        ],
+        name_contains: Annotated[
+            Optional[str],
+            Field(
+                default=None,
+                description="Optional case-insensitive substring that function names must contain.",
+            ),
+        ] = None,
+        min_size: Annotated[
+            int,
+            Field(default=0, ge=0, description="Minimum function size in bytes to include in the results."),
+        ] = 0,
+        limit: Annotated[
+            Optional[int],
+            Field(
+                default=100,
+                ge=0,
+                description="Maximum number of functions to return (0 means no limit).",
+            ),
+        ] = 100,
     ) -> dict:
         """Return function metadata for a view."""
 
         _log_tool_call(
             "bn_functions",
-            {"handle": handle, "name_contains": name_contains, "min_size": min_size},
+            {
+                "handle": handle,
+                "name_contains": name_contains,
+                "min_size": min_size,
+                "limit": limit,
+            },
         )
         service = require_service()
         return _wrap_service_call(
@@ -253,12 +257,25 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
                 handle,
                 name_contains=name_contains,
                 min_size=min_size,
+                limit=limit if limit and limit > 0 else None,
             ),
             tool_name="bn_functions",
         )
 
-    @app.tool()
-    def bn_function_summary(handle: str, function: str) -> dict:
+    @app.tool(
+        name="bn_function_summary",
+        description="Fetch detailed metadata for a specific function within a Binary Ninja view.",
+    )
+    def bn_function_summary(
+        handle: Annotated[
+            str,
+            Field(description="Handle of the Binary Ninja view containing the function."),
+        ],
+        function: Annotated[
+            str,
+            Field(description="Function identifier: accepts a name or address (hex or decimal)."),
+        ],
+    ) -> dict:
         """Detailed summary for a specific function."""
 
         _log_tool_call("bn_function_summary", {"handle": handle, "function": function})
@@ -268,11 +285,27 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
             tool_name="bn_function_summary",
         )
 
-    @app.tool()
+    @app.tool(
+        name="bn_hlil",
+        description="Retrieve High Level IL text for a function, optionally limited to a maximum instruction count.",
+    )
     def bn_hlil(
-        handle: str,
-        function: str,
-        max_instructions: Optional[int] = None,
+        handle: Annotated[
+            str,
+            Field(description="Handle of the Binary Ninja view that owns the function."),
+        ],
+        function: Annotated[
+            str,
+            Field(description="Function identifier: accepts a name or address (hex or decimal)."),
+        ],
+        max_instructions: Annotated[
+            Optional[int],
+            Field(
+                default=None,
+                ge=0,
+                description="Optional cap on the number of HLIL instructions to return (0 means unlimited).",
+            ),
+        ] = None,
     ) -> dict:
         """Return High Level IL lines for a function."""
 
@@ -290,8 +323,24 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
             tool_name="bn_hlil",
         )
 
-    @app.tool()
-    def bn_rename_function(handle: str, function: str, new_name: str) -> dict:
+    @app.tool(
+        name="bn_rename_function",
+        description="Assign a user-defined symbol name to a function within a Binary Ninja view.",
+    )
+    def bn_rename_function(
+        handle: Annotated[
+            str,
+            Field(description="Handle of the Binary Ninja view containing the function to rename."),
+        ],
+        function: Annotated[
+            str,
+            Field(description="Function identifier: accepts a name or address (hex or decimal)."),
+        ],
+        new_name: Annotated[
+            str,
+            Field(description="Desired user-visible symbol name for the function."),
+        ],
+    ) -> dict:
         """Rename a Binary Ninja function to a new symbolic name."""
 
         _log_tool_call(
@@ -304,24 +353,100 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
             tool_name="bn_rename_function",
         )
 
-    @app.tool()
-    def bn_list_variables(handle: str, function: str) -> dict:
+    @app.tool(
+        name="bn_list_variables",
+        description="List parameters, locals, and stack variables defined for a function.",
+    )
+    def bn_list_variables(
+        handle: Annotated[
+            str,
+            Field(description="Handle of the Binary Ninja view containing the function."),
+        ],
+        function: Annotated[
+            str,
+            Field(description="Function identifier: accepts a name or address (hex or decimal)."),
+        ],
+        max_parameters: Annotated[
+            Optional[int],
+            Field(
+                default=32,
+                ge=0,
+                description="Maximum parameter entries to return (0 means no cap).",
+            ),
+        ] = 32,
+        max_stack: Annotated[
+            Optional[int],
+            Field(
+                default=64,
+                ge=0,
+                description="Maximum stack variable entries to return (0 means no cap).",
+            ),
+        ] = 64,
+        max_variables: Annotated[
+            Optional[int],
+            Field(
+                default=64,
+                ge=0,
+                description="Maximum other variable entries to return (0 means no cap).",
+            ),
+        ] = 64,
+    ) -> dict:
         """Enumerate variables associated with a function."""
 
-        _log_tool_call("bn_list_variables", {"handle": handle, "function": function})
+        _log_tool_call(
+            "bn_list_variables",
+            {
+                "handle": handle,
+                "function": function,
+                "max_parameters": max_parameters,
+                "max_stack": max_stack,
+                "max_variables": max_variables,
+            },
+        )
         service = require_service()
         return _wrap_service_call(
-            lambda: service.list_variables(handle, function),
+            lambda: service.list_variables(
+                handle,
+                function,
+                max_parameters=max_parameters if max_parameters and max_parameters > 0 else None,
+                max_stack=max_stack if max_stack and max_stack > 0 else None,
+                max_variables=max_variables if max_variables and max_variables > 0 else None,
+            ),
             tool_name="bn_list_variables",
         )
 
-    @app.tool()
+    @app.tool(
+        name="bn_rename_variable",
+        description="Rename and optionally retype a function variable (parameter, local, or stack slot).",
+    )
     def bn_rename_variable(
-        handle: str,
-        function: str,
-        variable: str,
-        new_name: str,
-        new_type: str | None = None,
+        handle: Annotated[
+            str,
+            Field(description="Handle of the Binary Ninja view containing the variable."),
+        ],
+        function: Annotated[
+            str,
+            Field(description="Function identifier: accepts a name or address (hex or decimal)."),
+        ],
+        variable: Annotated[
+            str,
+            Field(
+                description=(
+                    "Variable identifier from `bn_list_variables`, such as `param:0`, `var:3`, or `stack:-0x40`."
+                ),
+            ),
+        ],
+        new_name: Annotated[
+            str,
+            Field(description="New user-defined name to assign to the variable."),
+        ],
+        new_type: Annotated[
+            Optional[str],
+            Field(
+                default=None,
+                description="Optional Binary Ninja type string to apply; omit to keep the existing type.",
+            ),
+        ] = None,
     ) -> dict:
         """Rename (and optionally retype) a function variable."""
 
@@ -347,13 +472,34 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
             tool_name="bn_rename_variable",
         )
 
-    @app.tool()
+    @app.tool(
+        name="bn_rename_stack_variable",
+        description="Convenience wrapper to rename a stack variable by frame offset using `bn_rename_variable`.",
+    )
     def bn_rename_stack_variable(
-        handle: str,
-        function: str,
-        offset: str | int,
-        new_name: str,
-        new_type: str | None = None,
+        handle: Annotated[
+            str,
+            Field(description="Handle of the Binary Ninja view containing the function."),
+        ],
+        function: Annotated[
+            str,
+            Field(description="Function identifier: accepts a name or address (hex or decimal)."),
+        ],
+        offset: Annotated[
+            str | int,
+            Field(description="Stack frame offset of the variable (accepts decimal or hex string)."),
+        ],
+        new_name: Annotated[
+            str,
+            Field(description="New user-defined name to assign to the stack variable."),
+        ],
+        new_type: Annotated[
+            Optional[str],
+            Field(
+                default=None,
+                description="Optional Binary Ninja type string to apply; omit to keep the existing type.",
+            ),
+        ] = None,
     ) -> dict:
         """Rename a stack variable by offset."""
 
@@ -379,12 +525,30 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
             tool_name="bn_rename_stack_variable",
         )
 
-    @app.tool()
+    @app.tool(
+        name="bn_define_data_variable",
+        description="Define or rename a user data variable at a given virtual address.",
+    )
     def bn_define_data_variable(
-        handle: str,
-        address: str | int,
-        var_type: str,
-        name: str | None = None,
+        handle: Annotated[
+            str,
+            Field(description="Handle of the Binary Ninja view where the data resides."),
+        ],
+        address: Annotated[
+            str | int,
+            Field(description="Address of the data variable (decimal or hex string)."),
+        ],
+        var_type: Annotated[
+            str,
+            Field(description="Binary Ninja type string describing the variable to define."),
+        ],
+        name: Annotated[
+            Optional[str],
+            Field(
+                default=None,
+                description="Optional symbol name to associate with the data variable.",
+            ),
+        ] = None,
     ) -> dict:
         """Define or rename a user data variable at the specified address."""
 
@@ -403,8 +567,24 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
             tool_name="bn_define_data_variable",
         )
 
-    @app.tool()
-    def bn_set_comment(handle: str, address: str | int, text: str) -> dict:
+    @app.tool(
+        name="bn_set_comment",
+        description="Attach or overwrite a repeatable comment at a specific address.",
+    )
+    def bn_set_comment(
+        handle: Annotated[
+            str,
+            Field(description="Handle of the Binary Ninja view where the comment should be written."),
+        ],
+        address: Annotated[
+            str | int,
+            Field(description="Address to annotate (decimal or hex string)."),
+        ],
+        text: Annotated[
+            str,
+            Field(description="Comment text to store at the address."),
+        ],
+    ) -> dict:
         """Attach a repeatable comment at the specified address."""
 
         _log_tool_call(
@@ -418,8 +598,28 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
             tool_name="bn_set_comment",
         )
 
-    @app.tool()
-    def bn_disassemble(handle: str, address: str | int, count: int = 1) -> dict:
+    @app.tool(
+        name="bn_disassemble",
+        description="Return linear disassembly text starting at the given address for a number of instructions.",
+    )
+    def bn_disassemble(
+        handle: Annotated[
+            str,
+            Field(description="Handle of the Binary Ninja view to disassemble."),
+        ],
+        address: Annotated[
+            str | int,
+            Field(description="Starting address for disassembly (decimal or hex string)."),
+        ],
+        count: Annotated[
+            int,
+            Field(
+                default=1,
+                gt=0,
+                description="Number of instructions to decode; must be a positive integer.",
+            ),
+        ] = 1,
+    ) -> dict:
         """Return disassembly text starting at *address* for *count* instructions."""
 
         if count <= 0:
@@ -436,8 +636,28 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
             tool_name="bn_disassemble",
         )
 
-    @app.tool()
-    def bn_code_refs(handle: str, address: str | int, max_results: int | None = None) -> dict:
+    @app.tool(
+        name="bn_code_refs",
+        description="List code references targeting the specified address.",
+    )
+    def bn_code_refs(
+        handle: Annotated[
+            str,
+            Field(description="Handle of the Binary Ninja view to query."),
+        ],
+        address: Annotated[
+            str | int,
+            Field(description="Target address to inspect for incoming code references."),
+        ],
+        max_results: Annotated[
+            Optional[int],
+            Field(
+                default=None,
+                ge=0,
+                description="Optional cap on the number of references to return; omit for all.",
+            ),
+        ] = None,
+    ) -> dict:
         """List code references targeting *address*."""
 
         _log_tool_call(
@@ -451,8 +671,28 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
             tool_name="bn_code_refs",
         )
 
-    @app.tool()
-    def bn_data_refs(handle: str, address: str | int, max_results: int | None = None) -> dict:
+    @app.tool(
+        name="bn_data_refs",
+        description="List data references targeting the specified address.",
+    )
+    def bn_data_refs(
+        handle: Annotated[
+            str,
+            Field(description="Handle of the Binary Ninja view to query."),
+        ],
+        address: Annotated[
+            str | int,
+            Field(description="Target address to inspect for incoming data references."),
+        ],
+        max_results: Annotated[
+            Optional[int],
+            Field(
+                default=None,
+                ge=0,
+                description="Optional cap on the number of references to return; omit for all.",
+            ),
+        ] = None,
+    ) -> dict:
         """List data references targeting *address*."""
 
         _log_tool_call(
@@ -466,8 +706,23 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
             tool_name="bn_data_refs",
         )
 
-    @app.tool()
-    def bn_symbols(handle: str, symbol_type: Optional[str] = None) -> dict:
+    @app.tool(
+        name="bn_symbols",
+        description="Enumerate symbols in a Binary Ninja view, optionally filtered by symbol type.",
+    )
+    def bn_symbols(
+        handle: Annotated[
+            str,
+            Field(description="Handle of the Binary Ninja view to inspect."),
+        ],
+        symbol_type: Annotated[
+            Optional[str],
+            Field(
+                default=None,
+                description="Optional symbol type name to filter by (e.g. `FunctionSymbol`, `DataSymbol`).",
+            ),
+        ] = None,
+    ) -> dict:
         """Enumerate symbols from the view."""
 
         _log_tool_call("bn_symbols", {"handle": handle, "symbol_type": symbol_type})
@@ -477,8 +732,24 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
             tool_name="bn_symbols",
         )
 
-    @app.tool()
-    def bn_read(handle: str, address: str, length: int) -> dict:
+    @app.tool(
+        name="bn_read",
+        description="Read raw bytes from a Binary Ninja view at the specified address.",
+    )
+    def bn_read(
+        handle: Annotated[
+            str,
+            Field(description="Handle of the Binary Ninja view to read from."),
+        ],
+        address: Annotated[
+            str,
+            Field(description="Starting address for the read (decimal or hex string)."),
+        ],
+        length: Annotated[
+            int,
+            Field(gt=0, description="Number of bytes to read; must be a positive integer."),
+        ],
+    ) -> dict:
         """Read bytes at an address from the view."""
 
         _log_tool_call("bn_read", {"handle": handle, "address": address, "length": length})

@@ -430,34 +430,6 @@ class BinaryNinjaService:
 
         return {"handle": handle, "function": func.name, "lines": instructions}
 
-    def get_basic_blocks(self, handle: str, identifier: str) -> Dict[str, Any]:
-        view = self._get_view(handle)
-        func = self._resolve_function(view, identifier)
-
-        blocks = []
-        for block in getattr(func, "basic_blocks", []):
-            edges = []
-            for edge in getattr(block, "outgoing_edges", []):
-                target = getattr(edge, "target", None)
-                edges.append(
-                    {
-                        "type": getattr(edge, "type", None),
-                        "target": _format_addr(getattr(target, "start", getattr(target, "addr", None)))
-                        if target
-                        else None,
-                    }
-                )
-            blocks.append(
-                {
-                    "start": _format_addr(getattr(block, "start", None)),
-                    "end": _format_addr(getattr(block, "end", None)),
-                    "length": getattr(block, "length", None),
-                    "outgoing_edges": edges,
-                }
-            )
-
-        return {"handle": handle, "function": func.name, "blocks": blocks}
-
     # ------------------------------------------------------------------
     # Data extraction
     # ------------------------------------------------------------------
@@ -940,23 +912,6 @@ class BinaryNinjaService:
             )
 
         return {"handle": handle, "address": _format_addr(address), "data_refs": items}
-
-    def find_strings(
-        self,
-        handle: str,
-        *,
-        query: Optional[str] = None,
-        min_length: int = 4,
-    ) -> Dict[str, Any]:
-        if min_length <= 0:
-            raise ValueError("min_length must be positive")
-
-        strings = self.get_strings(handle, min_length=min_length)["strings"]
-        if query:
-            needle = query.lower()
-            strings = [s for s in strings if needle in (s.get("value", "").lower())]
-
-        return {"handle": handle, "strings": strings}
 
     # ------------------------------------------------------------------
     # Internal helpers
