@@ -363,6 +363,7 @@ class BinaryNinjaService:
         *,
         name_contains: Optional[str] = None,
         min_size: int = 0,
+        limit: Optional[int] = None,
     ) -> Dict[str, Any]:
         view = self._get_view(handle)
         name_filter = name_contains.lower() if name_contains else None
@@ -384,6 +385,8 @@ class BinaryNinjaService:
                     "return_type": self._stringify(getattr(getattr(func, "type", None), "return_value", None)),
                 }
             )
+            if limit and len(functions) >= limit:
+                break
 
         return {"handle": handle, "functions": functions}
 
@@ -500,6 +503,7 @@ class BinaryNinjaService:
             raise BinaryNinjaServiceError(f"Failed to enumerate symbols: {exc}") from exc
 
         for symbol in symbol_iter or []:
+            print(symbol)
             type_name = getattr(getattr(symbol, "type", None), "name", None)
             if filter_type and (type_name or "").lower() != filter_type:
                 continue
@@ -572,7 +576,15 @@ class BinaryNinjaService:
             "name": new_name,
         }
 
-    def list_variables(self, handle: str, identifier: str) -> Dict[str, Any]:
+    def list_variables(
+        self,
+        handle: str,
+        identifier: str,
+        *,
+        max_parameters: Optional[int] = None,
+        max_stack: Optional[int] = None,
+        max_variables: Optional[int] = None,
+    ) -> Dict[str, Any]:
         view = self._get_view(handle)
         func = self._resolve_function(view, identifier)
 
@@ -581,16 +593,22 @@ class BinaryNinjaService:
                 self._describe_variable(var, kind="parameter", index=index)
                 for index, var in enumerate(getattr(func, "parameter_vars", []) or [])
             ]
+            if max_parameters and max_parameters > 0:
+                parameters[:] = parameters[:max_parameters]
 
             stack_vars = [
                 self._describe_variable(var, kind="stack")
                 for var in getattr(func, "stack_layout", []) or []
             ]
+            if max_stack and max_stack > 0:
+                stack_vars[:] = stack_vars[:max_stack]
 
             variables = [
                 self._describe_variable(var, kind="variable", index=index)
                 for index, var in enumerate(getattr(func, "vars", []) or [])
             ]
+            if max_variables and max_variables > 0:
+                variables[:] = variables[:max_variables]
 
             return {
                 "handle": handle,
@@ -616,6 +634,34 @@ class BinaryNinjaService:
         variable = self._resolve_variable_identifier(func, variable_id)
         type_override = self._parse_type_spec(view, new_type)
         effective_type = self._rename_variable_common(func, variable, new_name=new_name, type_override=type_override)
+        func = self._resolve_function(view, identifier)
+
+        def _refresh() -> Any:
+            return self._resolve_variable_identifier(func, variable_id)
+
+        try:
+            refreshed = _refresh()
+        except BinaryNinjaServiceError as exc:
+            raise BinaryNinjaServiceError(f"Rename applied but variable lookup failed: {exc}") from exc
+
+        current_name = getattr(refreshed, "name", None)
+        if current_name != new_name:
+            try:
+                self._update_analysis(view, None)
+            except Exception:  # pragma: no cover - analysis update best effort
+                pass
+
+            func = self._resolve_function(view, identifier)
+            try:
+                refreshed = _refresh()
+            except BinaryNinjaServiceError as exc:
+                raise BinaryNinjaServiceError(f"Rename applied but variable lookup failed: {exc}") from exc
+            current_name = getattr(refreshed, "name", None)
+
+        if current_name != new_name:
+            raise BinaryNinjaServiceError(
+                "Binary Ninja did not report the updated variable name; ensure the function is user-modifiable."
+            )
 
         return {
             "handle": handle,
@@ -1269,23 +1315,32 @@ class BinaryNinjaService:
         if variable_id.startswith("stack:"):
             offset_text = variable_id.split(":", 1)[1]
             offset = self._coerce_int(offset_text)
-            addr = getattr(func, "start", 0)
-            stack_var = None
+            stack_var: Any | None = None
 
-            def _lookup() -> Any:
-                return func.get_stack_var_at_frame_offset(offset, addr)
+            def _from_layout() -> Any:
+                layout: List[Any] = list(getattr(func, "stack_layout", []) or [])
+                for candidate in layout:
+                    if getattr(candidate, "storage", None) == offset:
+                        return candidate
+                return None
 
             try:
-                stack_var = self._call_on_main_thread(_lookup)
-            except Exception as exc:  # pragma: no cover - BN specific failures
-                self._log.debug(
-                    "Failed to resolve stack variable at offset %s in %s: %s",
-                    offset_text,
-                    getattr(func, "name", None),
-                    exc,
-                    exc_info=True,
-                )
-                raise BinaryNinjaServiceError(f"Unable to resolve stack variable at offset {offset_text}") from exc
+                stack_var = self._call_on_main_thread(_from_layout)
+            except Exception:
+                pass
+
+            if stack_var is None:
+                addr = getattr(func, "start", 0)
+
+                def _lookup() -> Any:
+                    return func.get_stack_var_at_frame_offset(offset, addr)
+
+                try:
+                    stack_var = self._call_on_main_thread(_lookup)
+                except Exception as exc:  # pragma: no cover - BN specific failures
+                    raise BinaryNinjaServiceError(
+                        f"Unable to resolve stack variable at offset {offset_text}"
+                    ) from exc
 
             if stack_var is None:
                 raise BinaryNinjaServiceError(f"No stack variable defined at offset {offset_text}")
@@ -1305,13 +1360,28 @@ class BinaryNinjaService:
         if not new_name or not new_name.strip():
             raise ValueError("new_name must be a non-empty string")
 
+        view = getattr(func, "view", None)
+
         def _apply() -> Any:
             effective_type = type_override or getattr(variable, "type", None)
-            func.create_user_var(variable, effective_type, new_name)
+
+            type_setter = getattr(variable, "set_type_async", None)
+            if type_override is not None and callable(type_setter):
+                type_setter(type_override)
+
+            name_setter = getattr(variable, "set_name_async", None)
+            if not callable(name_setter):
+                raise BinaryNinjaServiceError("Binary Ninja variable does not support renaming via set_name_async")
+
+            name_setter(new_name)
+
+            if effective_type is None and type_override is None:
+                effective_type = getattr(variable, "type", None)
+
             return effective_type
 
         try:
-            return self._call_on_main_thread(_apply)
+            effective_type = self._call_on_main_thread(_apply)
         except Exception as exc:  # pragma: no cover - BN specific failures
             self._log.debug(
                 "Failed to rename variable %s in %s: %s",
@@ -1321,3 +1391,5 @@ class BinaryNinjaService:
                 exc_info=True,
             )
             raise BinaryNinjaServiceError(f"Unable to rename variable: {exc}") from exc
+
+        return effective_type

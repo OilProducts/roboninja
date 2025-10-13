@@ -112,41 +112,63 @@ class _DummyType:
 
 
 def _make_function():
-    param = SimpleNamespace(
+    class _Variable(SimpleNamespace):
+        def set_name_async(self, new_name):
+            _record(
+                "set_name_async",
+                var=self,
+                name=new_name,
+            )
+            self.name = new_name
+            self.last_seen_name = new_name
+
+        def set_type_async(self, new_type):  # type: ignore[override]
+            _record(
+                "set_type_async",
+                var=self,
+                type=new_type,
+            )
+            self.type = new_type
+
+    param = _Variable(
         name="arg0",
         type=_DummyType("int"),
         storage=0,
-        source_type=SimpleNamespace(name="Register"),
+        source_type=SimpleNamespace(name="RegisterVariableSourceType"),
+        last_seen_name="arg0",
     )
-    stack = SimpleNamespace(
+    stack = _Variable(
         name="var_8",
         type=_DummyType("char*"),
         storage=-8,
-        source_type=SimpleNamespace(name="Stack"),
+        source_type=SimpleNamespace(name="StackVariableSourceType"),
+        last_seen_name="var_8",
     )
-    local = SimpleNamespace(
+    local = _Variable(
         name="tmp1",
         type=_DummyType("int32_t"),
         storage=4,
-        source_type=SimpleNamespace(name="Register"),
+        source_type=SimpleNamespace(name="RegisterVariableSourceType"),
+        last_seen_name="tmp1",
     )
 
     calls: list[dict[str, object]] = []
 
-    def create_user_var(var, var_type, name, ignore_disjoint_uses=False):
-        calls.append(
-            {
-                "var": var,
-                "type": var_type,
-                "name": name,
-                "ignore": ignore_disjoint_uses,
-            }
-        )
+    def _record(action: str, **payload: object) -> None:
+        if action == "set_name_async":
+            var = payload.get("var")
+            if var is not None:
+                var.name = payload.get("name")
+                var.last_seen_name = payload.get("name")
+        elif action == "set_type_async":
+            var = payload.get("var")
+            if var is not None and payload.get("type") is not None:
+                var.type = payload["type"]
+        entry: dict[str, object] = {"action": action, **payload}
+        calls.append(entry)
 
-    def get_stack_var_at_frame_offset(offset, _addr):
-        if offset == stack.storage:
-            return stack
-        return None
+    def get_stack_var_at_frame_offset(_offset, _addr):
+        raise AssertionError("stack layout lookup should be used")
 
     func = SimpleNamespace(
         name="target",
@@ -154,7 +176,6 @@ def _make_function():
         parameter_vars=[param],
         stack_layout=[stack],
         vars=[local],
-        create_user_var=create_user_var,
         get_stack_var_at_frame_offset=get_stack_var_at_frame_offset,
     )
     return func, calls, param, stack, local
@@ -166,6 +187,7 @@ def test_list_variables_reports_kinds(monkeypatch):
     view = SimpleNamespace(
         get_functions_at=lambda addr: [],
         get_functions_by_name=lambda name: [func] if name == "target" else [],
+        update_analysis_and_wait=lambda: None,
     )
 
     service = _make_service(view)
@@ -189,6 +211,7 @@ def test_rename_variable_updates_user_name(monkeypatch):
         parse_type_string=lambda text: (dummy_type, text),
         get_functions_at=lambda addr: [],
         get_functions_by_name=lambda name: [func] if name == "target" else [],
+        update_analysis_and_wait=lambda: None,
     )
 
     from roboninja import binaryninja_service as bn_service
@@ -200,10 +223,12 @@ def test_rename_variable_updates_user_name(monkeypatch):
 
     result = service.rename_variable("handle", "target", "var:0", "renamed", new_type="uint32_t")
 
-    assert calls, "create_user_var should be invoked"
+    assert calls, "set_name_async should be invoked"
+    assert calls[-1]["action"] == "set_name_async"
     assert calls[-1]["var"] is local
-    assert calls[-1]["type"] is dummy_type
     assert calls[-1]["name"] == "renamed"
+    type_actions = [entry for entry in calls if entry["action"] == "set_type_async"]
+    assert type_actions and type_actions[-1]["type"] is dummy_type
     assert result["name"] == "renamed"
     assert result["type"] == "uint32_t"
 
@@ -214,6 +239,7 @@ def test_rename_stack_variable_resolves_offset(monkeypatch):
     view = SimpleNamespace(
         get_functions_at=lambda addr: [],
         get_functions_by_name=lambda name: [func] if name == "target" else [],
+        update_analysis_and_wait=lambda: None,
     )
 
     from roboninja import binaryninja_service as bn_service
@@ -225,7 +251,8 @@ def test_rename_stack_variable_resolves_offset(monkeypatch):
 
     result = service.rename_stack_variable("handle", "target", stack.storage, "stack_var")
 
-    assert calls, "create_user_var should be invoked for stack variables"
+    assert calls, "set_name_async should be invoked for stack variables"
+    assert calls[-1]["action"] == "set_name_async"
     assert calls[-1]["var"] is stack
     assert calls[-1]["name"] == "stack_var"
     assert result["variable"] == f"stack:{stack.storage}"
