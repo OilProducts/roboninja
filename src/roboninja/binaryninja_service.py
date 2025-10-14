@@ -386,25 +386,7 @@ class BinaryNinjaService:
 
         return {"handle": handle, "functions": functions}
 
-    def get_function_summary(self, handle: str, identifier: str) -> Dict[str, Any]:
-        view = self._get_view(handle)
-        func = self._resolve_function(view, identifier)
-
-        def _collect() -> Dict[str, Any]:
-            return {
-                "handle": handle,
-                "name": func.name,
-                "start": _format_addr(getattr(func, "start", None)),
-                "size": getattr(func, "total_bytes", getattr(func, "size", 0)),
-                "basic_block_count": len(getattr(func, "basic_blocks", [])),
-                "calling_convention": getattr(getattr(func, "calling_convention", None), "name", None),
-                "return_type": self._stringify(getattr(getattr(func, "type", None), "return_value", None)),
-                "parameters": [
-                    self._stringify(param) for param in getattr(func, "parameter_vars", [])
-                ],
-            }
-
-        return self._call_on_main_thread(_collect)
+    
 
     def get_high_level_il(
         self,
@@ -421,8 +403,8 @@ class BinaryNinjaService:
             raise BinaryNinjaServiceError(f"Function {identifier} has no High Level IL available")
 
         instructions = [str(instr) for instr in getattr(hlil, "instructions", [])]
-        if max_instructions is not None:
-            instructions = instructions[: max(0, max_instructions)]
+        if max_instructions is not None and max_instructions > 0:
+            instructions = instructions[: max_instructions]
 
         return {"handle": handle, "function": func.name, "lines": instructions}
 

@@ -272,28 +272,7 @@ def create_app(settings: Optional[Settings] = None) -> FastMCP:
             tool_name="bn_functions",
         )
 
-    @app.tool(
-        name="bn_function_summary",
-        description="Fetch detailed metadata for a specific function within a Binary Ninja view.",
-    )
-    def bn_function_summary(
-        handle: Annotated[
-            str,
-            Field(description="Handle of the Binary Ninja view containing the function."),
-        ],
-        function: Annotated[
-            str,
-            Field(description="Function identifier: accepts a name or address (hex or decimal)."),
-        ],
-    ) -> dict:
-        """Detailed summary for a specific function."""
-
-        _log_tool_call("bn_function_summary", {"handle": handle, "function": function})
-        service = require_service()
-        return _wrap_service_call(
-            lambda: service.get_function_summary(handle, function),
-            tool_name="bn_function_summary",
-        )
+    
 
     @app.tool(
         name="bn_hlil",

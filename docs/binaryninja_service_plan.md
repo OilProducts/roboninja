@@ -40,7 +40,6 @@ Wrap the service methods in FastMCP tools with clear JSON schemas:
 2. **`bn_list_views`** → enumerates currently opened handles with metadata (path, size, leftover analysis tasks).
 3. **`bn_close`** (`handle`) → closes a view.
 4. **`bn_functions`** (`handle`, optional `name_contains`, `min_size`) → list of functions with start address, size, symbol name, basic block count.
-5. **`bn_function_summary`** (`handle`, `function`) → returns high-level details including calling convention, parameters, stack frame size.
 6. **`bn_hlil`** (`handle`, `function`, optional `start`, `end`) → slices High Level IL as structured text or JSON tree.
 7. **`bn_basic_blocks`** (`handle`, `function`) → outlines blocks with addresses and outgoing edges.
 8. **`bn_strings`** (`handle`, optional `min_length`, `encoding`) → text strings discovered in the view.
